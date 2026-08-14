@@ -136,7 +136,7 @@
     return list;
   }
 
-  // 2) 页面高频色兖底（Top10）
+  // 2) 页面高频色兜底（Top10）
   function extractFrequentColors(samples) {
     const freq = new Map();
     for (const el of samples) {

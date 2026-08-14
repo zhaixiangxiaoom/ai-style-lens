@@ -15,6 +15,7 @@
     <img class="logo" src="icons/icon48.png" alt="StyleLens">
     <h1>StyleLens</h1>
     <span class="url" id="panelUrl"></span>
+    <button class="settings-btn" id="historyBtn" title="历史分析">🕘</button>
     <button class="settings-btn" id="settingsBtn" title="AI 设置">⚙️</button>
   </div>
 
@@ -68,9 +69,11 @@
       <div class="style-tags" id="styleTags"></div>
     </div>
 
-    <!-- AI 解读骨架屏 -->
+    <!-- AI 解读骨架屏（含流式预览区） -->
     <div class="ai-skeleton" id="aiSkeleton" hidden>
       <div class="sk-title"><span class="spinner"></span>正在生成 AI 设计解读...</div>
+      <div class="ai-live-tags" id="aiLiveTags"></div>
+      <div class="ai-live-text" id="aiLiveText" hidden></div>
       <div class="sk-line"></div>
       <div class="sk-line"></div>
       <div class="sk-line"></div>
@@ -111,10 +114,27 @@
     <div class="details-section" id="detailsSection"></div>
   </div>
 
+  <!-- 历史分析视图 -->
+  <div class="history-view" id="historyView">
+    <div class="history-head">
+      <span>历史分析</span>
+      <button class="btn btn-secondary" id="historyClearBtn">清空</button>
+    </div>
+    <div id="historyList"></div>
+  </div>
+
   <!-- 底部固定操作栏 -->
   <div class="action-bar">
     <button class="btn btn-secondary" id="reanalyzeBtn">🔄 重新分析</button>
-    <button class="btn btn-primary" id="exportBtn">📄 导出 MD</button>
+    <div class="export-wrap">
+      <button class="btn btn-primary" id="exportBtn">📤 导出</button>
+      <div class="export-menu" id="exportMenu" hidden>
+        <button data-export="md">📄 Markdown 规范</button>
+        <button data-export="json">🧩 W3C Design Tokens</button>
+        <button data-export="tailwind">⚙️ tailwind.config.js</button>
+        <button data-export="prompt">🤖 复制 Agent Prompt</button>
+      </div>
+    </div>
   </div>
 
   <!-- Toast：背景色 = 复制的颜色值（非颜色类用品牌紫） -->

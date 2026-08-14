@@ -108,11 +108,15 @@ async function runAI(cfg, data, screenshot) {
     const image = await prepareImage(screenshot);
     const controller = new AbortController();
     let timer = setTimeout(() => controller.abort(), AI_IDLE_TIMEOUT_MS);
-    // 每收到数据重置空闲计时，并通知面板重置看门狗（同时保活 SW）
-    const onProgress = () => {
+    // 每收到数据重置空闲计时，并节流推送已解析的部分字段（面板流式预览 + 看门狗重置 + SW 保活）
+    let lastPush = 0;
+    const onProgress = fullText => {
       clearTimeout(timer);
       timer = setTimeout(() => controller.abort(), AI_IDLE_TIMEOUT_MS);
-      chrome.runtime.sendMessage({ type: 'AI_PROGRESS' }).catch(() => {});
+      const now = Date.now();
+      if (now - lastPush < 120) return; // 120ms 节流，避免消息风暴
+      lastPush = now;
+      chrome.runtime.sendMessage({ type: 'AI_PROGRESS', partial: extractPartial(fullText) }).catch(() => {});
     };
     const text = cfg.provider === 'anthropic'
       ? await callAnthropic(cfg, data, image, controller.signal, onProgress)
@@ -175,7 +179,7 @@ async function callAnthropic(cfg, data, image, signal, onProgress) {
         const ev = JSON.parse(payload);
         if (ev.type === 'content_block_delta' && ev.delta && ev.delta.text) {
           text += ev.delta.text;
-          onProgress();
+          onProgress(text);
         }
       } catch { /* 忽略非 JSON 行 */ }
     }
@@ -211,8 +215,9 @@ async function callOpenAI(cfg, data, image, signal, onProgress) {
   // 部分兼容服务不支持流式 → 整包 JSON 解析
   if (ctype.includes('application/json')) {
     const json = await res.json();
-    onProgress();
-    return (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
+    const full = (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
+    onProgress(full);
+    return full;
   }
 
   // SSE 流式
@@ -236,7 +241,7 @@ async function callOpenAI(cfg, data, image, signal, onProgress) {
         const delta = ev.choices && ev.choices[0] && ev.choices[0].delta;
         if (delta && delta.content) {
           text += delta.content;
-          onProgress();
+          onProgress(text);
         }
       } catch { /* 忽略非 JSON 行 */ }
     }
@@ -261,6 +266,23 @@ async function testAI() {
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
+}
+
+// 从流式累积文本中增量提取可读字段（用于面板流式预览）
+// 模型按 style_tags → summary → intent 顺序输出，字段未闭合时取已到达部分
+function extractPartial(text) {
+  const out = { tags: [], summary: '', intent: '' };
+  const mT = /"style_tags"\s*:\s*\[([^\]]*)\]/.exec(text);
+  if (mT) out.tags = (mT[1].match(/"([^"]*)"/g) || []).map(s => s.slice(1, -1)).slice(0, 3);
+  const mS = /"summary"\s*:\s*"((?:[^"\\]|\\.)*)"?/.exec(text);
+  if (mS) out.summary = unescapeJsonStr(mS[1]);
+  const mI = /"intent"\s*:\s*"((?:[^"\\]|\\.)*)"?/.exec(text);
+  if (mI) out.intent = unescapeJsonStr(mI[1]);
+  return out;
+}
+
+function unescapeJsonStr(s) {
+  try { return JSON.parse('"' + s.replace(/\\$/, '') + '"'); } catch { return s; }
 }
 
 // 解析模型输出的 JSON（容忍 ```json 代码块包裹）
