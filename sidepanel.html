@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StyleLens</title>
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+
+<div class="side-panel" id="sidePanel">
+
+  <!-- Header -->
+  <div class="panel-header">
+    <div class="logo">🔍</div>
+    <h1>StyleLens</h1>
+    <span class="url" id="panelUrl"></span>
+  </div>
+
+  <!-- 空状态 -->
+  <div class="empty-view" id="emptyView">
+    <svg width="120" height="90" viewBox="0 0 120 90" fill="none">
+      <path d="M10 45 L50 45" stroke="#6366f1" stroke-width="2" stroke-linecap="round"/>
+      <path d="M50 25 L80 45 L50 65 Z" stroke="#8b5cf6" stroke-width="2" fill="none" stroke-linejoin="round"/>
+      <path d="M80 45 L112 28" stroke="#f87171" stroke-width="2" stroke-linecap="round"/>
+      <path d="M80 45 L114 42" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/>
+      <path d="M80 45 L112 56" stroke="#34d399" stroke-width="2" stroke-linecap="round"/>
+      <path d="M80 45 L106 68" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <div class="empty-title">打开任意网站，点击分析即可提取设计 DNA</div>
+    <div class="empty-desc">
+      点击插件图标或按 <b>⌘/Ctrl + Shift + S</b>，<br>
+      一键提取颜色、字体、间距、圆角等设计规范。
+    </div>
+    <div class="empty-free">无需配置即可使用基础功能</div>
+  </div>
+
+  <!-- Loading：分步反馈，色板先行渲染 -->
+  <div class="loading-view" id="loadingView">
+    <div class="loading-step pending" id="step1">
+      <span class="dot"></span><span>正在提取 CSS 变量...</span>
+    </div>
+    <div class="loading-step pending" id="step2">
+      <span class="dot"></span><span>正在分析页面样式...</span>
+    </div>
+    <div class="loading-step pending" id="step3">
+      <span class="dot"></span><span>正在生成设计规范...</span>
+    </div>
+    <div class="early-palette" id="earlyPalette" hidden>
+      <div class="section-label">已提取色板</div>
+      <div class="color-palette" id="earlyPaletteRow"></div>
+    </div>
+  </div>
+
+  <!-- 错误状态 -->
+  <div class="error-view" id="errorView">
+    <div class="error-icon">⚠️</div>
+    <div class="error-text" id="errorText"></div>
+    <button class="btn btn-secondary" id="retryBtn">重试</button>
+  </div>
+
+  <!-- 结果视图 -->
+  <div class="result-view" id="resultView">
+
+    <!-- AI 区域（阶段 2 淡入；无 Key 时隐藏） -->
+    <div class="ai-zone" id="aiZone" hidden>
+      <div class="style-tags" id="styleTags"></div>
+    </div>
+
+    <!-- AI 解读骨架屏 -->
+    <div class="ai-skeleton" id="aiSkeleton" hidden>
+      <div class="sk-title"><span class="spinner"></span>正在生成 AI 设计解读...</div>
+      <div class="sk-line"></div>
+      <div class="sk-line"></div>
+      <div class="sk-line"></div>
+      <div class="sk-line"></div>
+    </div>
+
+    <!-- 无 Key 解锁引导卡片 -->
+    <div class="unlock-card" id="unlockCard" hidden>
+      <div class="unlock-title">🔑 配置 API Key 解锁 AI 设计解读 →</div>
+      <div class="unlock-desc">了解这套设计背后的意图、风格定位，并获得可直接交给 AI Agent 的复现指令。</div>
+    </div>
+
+    <!-- Mood Board：背景 = 目标站主背景色，文字色按亮度自动计算 -->
+    <div class="mood-board" id="moodBoard">
+      <div class="mood-title" id="moodTitle"></div>
+      <div class="intent" id="moodIntent" hidden></div>
+
+      <div class="section-label">Color Palette</div>
+      <div class="color-palette" id="moodPalette"></div>
+
+      <div class="font-preview" id="fontPreview" hidden>
+        <div class="section-label">Typography</div>
+        <div id="fontSamples"></div>
+      </div>
+    </div>
+
+    <!-- 详细规范：折叠卡片组，整行可点击复制 -->
+    <div class="details-section" id="detailsSection"></div>
+  </div>
+
+  <!-- 底部固定操作栏 -->
+  <div class="action-bar">
+    <button class="btn btn-secondary" id="reanalyzeBtn">🔄 重新分析</button>
+    <button class="btn btn-primary" id="exportBtn">📄 导出 MD</button>
+  </div>
+
+  <!-- Toast：背景色 = 复制的颜色值（非颜色类用品牌紫） -->
+  <div class="toast" id="toast">✓ 已复制</div>
+
+</div>
+
+<script src="sidepanel.js"></script>
+</body>
+</html>

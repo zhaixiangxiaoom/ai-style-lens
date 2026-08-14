@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StyleLens - Side Panel Demo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ===== 主题变量：暗色模式跟随系统（零 JS 切换逻辑），可被 demo 控件覆盖 ===== */
+:root {
+  color-scheme: light dark;
+  --panel-bg: #f7f7f8;
+  --panel-bg-sticky: #f7f7f8;
+  --card-bg: #ffffff;
+  --card-bg-2: #f0f0f2;
+  --border: #e3e3e6;
+  --border-soft: #ececef;
+  --text-1: #1a1a1c;
+  --text-2: #55555c;
+  --text-3: #999aa0;
+  --mono-color: #3a3a40;
+  --brand: #6366f1;
+  --brand-2: #8b5cf6;
+  --tag1-bg: #ede9fe; --tag1-fg: #6d28d9;
+  --tag2-bg: #e0f2fe; --tag2-fg: #0e7490;
+  --tag3-bg: #dcfce7; --tag3-fg: #15803d;
+  --unlock-bg: #eef0ff;
+  --unlock-border: #c7ccf7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --panel-bg: #1c1c1e;
+    --panel-bg-sticky: #1c1c1e;
+    --card-bg: #252528;
+    --card-bg-2: #1c1c1e;
+    --border: #2c2c2e;
+    --border-soft: #2a2a2c;
+    --text-1: #f0f0f0;
+    --text-2: #bbbbbf;
+    --text-3: #80808a;
+    --mono-color: #e0e0e0;
+    --tag1-bg: #2d1b69; --tag1-fg: #a78bfa;
+    --tag2-bg: #1b3a4b; --tag2-fg: #67e8f9;
+    --tag3-bg: #1b2e1b; --tag3-fg: #86efac;
+    --unlock-bg: #23233a;
+    --unlock-border: #3a3a5c;
+  }
+}
+
+/* demo 手动切换主题 */
+html[data-theme="light"] {
+  color-scheme: light;
+  --panel-bg: #f7f7f8; --panel-bg-sticky: #f7f7f8; --card-bg: #ffffff;
+  --card-bg-2: #f0f0f2; --border: #e3e3e6; --border-soft: #ececef;
+  --text-1: #1a1a1c; --text-2: #55555c; --text-3: #999aa0; --mono-color: #3a3a40;
+  --tag1-bg: #ede9fe; --tag1-fg: #6d28d9;
+  --tag2-bg: #e0f2fe; --tag2-fg: #0e7490;
+  --tag3-bg: #dcfce7; --tag3-fg: #15803d;
+  --unlock-bg: #eef0ff; --unlock-border: #c7ccf7;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --panel-bg: #1c1c1e; --panel-bg-sticky: #1c1c1e; --card-bg: #252528;
+  --card-bg-2: #1c1c1e; --border: #2c2c2e; --border-soft: #2a2a2c;
+  --text-1: #f0f0f0; --text-2: #bbbbbf; --text-3: #80808a; --mono-color: #e0e0e0;
+  --tag1-bg: #2d1b69; --tag1-fg: #a78bfa;
+  --tag2-bg: #1b3a4b; --tag2-fg: #67e8f9;
+  --tag3-bg: #1b2e1b; --tag3-fg: #86efac;
+  --unlock-bg: #23233a; --unlock-border: #3a3a5c;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #0f0f0f;
+  color: #e0e0e0;
+  display: flex;
+  height: 100vh;
+}
+
+/* 模拟被分析的网站（目标站主背景 #0A2540） */
+.mock-website {
+  flex: 1;
+  background: #0a2540;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.mock-website::after {
+  content: '← 目标网站页面（主背景 #0A2540）';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #4a5a7a;
+  font-size: 22px;
+  letter-spacing: 2px;
+}
+
+/* ===== Side Panel ===== */
+.side-panel {
+  width: 380px;
+  height: 100vh;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+  background: var(--panel-bg-sticky);
+  z-index: 10;
+}
+
+.panel-header .logo {
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.panel-header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.panel-header .url {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-left: auto;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== 视图切换（JS 显式控制，避免状态叠加） ===== */
+.empty-view, .loading-view, .result-view { display: none; }
+.side-panel.show-empty .empty-view { display: flex; }
+.side-panel.show-loading .loading-view { display: block; }
+.side-panel.show-result .result-view { display: block; }
+
+/* ===== 空状态 ===== */
+.empty-view {
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px 28px;
+  gap: 14px;
+}
+
+.empty-view svg { opacity: 0.9; }
+
+.empty-view .empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.empty-view .empty-desc {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+
+.empty-view .empty-free {
+  font-size: 12px;
+  color: var(--brand);
+  background: var(--unlock-bg);
+  border: 1px solid var(--unlock-border);
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+/* ===== 风格标签（AI 阶段 2 产物） ===== */
+.style-tags {
+  padding: 12px 20px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tag:nth-child(1) { background: var(--tag1-bg); color: var(--tag1-fg); }
+.tag:nth-child(2) { background: var(--tag2-bg); color: var(--tag2-fg); }
+.tag:nth-child(3) { background: var(--tag3-bg); color: var(--tag3-fg); }
+
+/* ===== Mood Board：背景 = 目标站主背景色，不受插件暗色模式影响 ===== */
+.mood-board {
+  margin: 0 16px 16px;
+  padding: 20px;
+  background: #0a2540; /* dominantBgColor，运行时注入 */
+  border-radius: 12px;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+.mood-board .mood-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.mood-board .intent {
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 16px;
+  font-style: italic;
+}
+
+.mood-board .section-label {
+  font-size: 11px;
+  opacity: 0.55;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 色板 */
+.color-palette {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.color-swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  position: relative;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.color-swatch:hover { transform: scale(1.15); }
+
+.color-swatch .tooltip {
+  display: none;
+  position: absolute;
+  bottom: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: #ccc;
+  white-space: nowrap;
+  background: rgba(0, 0, 0, 0.75);
+  padding: 2px 6px;
+  border-radius: 4px;
+  z-index: 5;
+}
+
+.color-swatch:hover .tooltip { display: block; }
+
+/* 字体预览：实际渲染目标站字体 */
+.font-preview { margin-bottom: 4px; }
+
+.font-sample {
+  padding: 10px 12px;
+  background: rgba(127, 127, 127, 0.12);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.font-sample:hover { background: rgba(127, 127, 127, 0.22); }
+
+.font-sample .name {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-bottom: 4px;
+}
+
+.font-sample .text { font-size: 20px; }
+
+.font-sample.heading .text {
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+}
+
+.font-sample.body .text {
+  font-family: 'Inter', sans-serif;
+  font-weight: 400;
+  font-size: 15px;
+}
+
+/* AI 解读骨架屏（阶段 2 loading） */
+.ai-skeleton {
+  margin: 0 16px 16px;
+  padding: 16px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  display: none;
+}
+
+.ai-skeleton .sk-title {
+  font-size: 12px;
+  color: var(--brand);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-skeleton .sk-title .spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--brand);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.sk-line {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--card-bg-2) 25%, var(--border) 50%, var(--card-bg-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  margin-bottom: 8px;
+}
+
+.sk-line:nth-child(3) { width: 90%; }
+.sk-line:nth-child(4) { width: 70%; }
+.sk-line:nth-child(5) { width: 45%; margin-bottom: 0; }
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* 无 Key 解锁引导卡片 */
+.unlock-card {
+  margin: 0 16px 16px;
+  padding: 16px 20px;
+  background: var(--unlock-bg);
+  border: 1px dashed var(--unlock-border);
+  border-radius: 12px;
+  cursor: pointer;
+  display: none;
+  transition: border-color 0.15s;
+}
+
+.unlock-card:hover { border-color: var(--brand); }
+
+.unlock-card .unlock-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand);
+  margin-bottom: 4px;
+}
+
+.unlock-card .unlock-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+/* AI 区域淡入（阶段 2 热更新） */
+.ai-zone { transition: opacity 0.5s ease; }
+.ai-zone.fade-in { animation: fadeIn 0.5s ease; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== 详细规范（折叠卡片组） ===== */
+.details-section { padding: 0 16px 16px; }
+
+.detail-group {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--card-bg);
+}
+
+.detail-group-header {
+  padding: 12px 16px;
+  background: var(--card-bg);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+}
+
+.detail-group-header .summary {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+  margin-left: 8px;
+  flex: 1;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-group-header::after {
+  content: '▾';
+  font-size: 12px;
+  color: var(--text-3);
+  margin-left: 8px;
+}
+
+.detail-group-header.collapsed::after { content: '▸'; }
+
+.detail-group-content {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* token 行：整行可点击复制 */
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  margin: 0 -6px;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.token-row:last-child { border-bottom: none; }
+.token-row:hover { background: var(--card-bg-2); }
+.token-row:active { transform: scale(0.99); }
+
+.token-color {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+}
+
+.token-label {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-value {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  color: var(--mono-color);
+}
+
+.token-row .copy-hint {
+  font-size: 10px;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.token-row:hover .copy-hint { opacity: 1; }
+
+/* ===== 底部固定操作栏 ===== */
+.action-bar {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  position: sticky;
+  bottom: 0;
+  background: var(--panel-bg-sticky);
+  display: flex;
+  gap: 10px;
+}
+
+.btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.btn:hover { opacity: 0.85; }
+
+.btn-primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+}
+
+.btn-secondary {
+  background: var(--card-bg-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+
+/* ===== Loading 分步状态 ===== */
+.loading-view { padding: 20px; }
+
+.loading-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.loading-step .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.loading-step.done .dot { background: #22c55e; }
+.loading-step.active .dot { background: #6366f1; animation: pulse 1s infinite; }
+.loading-step.pending .dot { background: var(--border); }
+
+.loading-step.done { color: #22c55e; }
+.loading-step.active { color: var(--text-1); }
+.loading-step.pending { color: var(--text-3); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+/* ===== Toast：位于 side panel 内部底部，背景色 = 当前复制的颜色值（非颜色类用品牌紫） ===== */
+.toast {
+  position: fixed;
+  bottom: 88px;
+  right: 190px; /* panel 宽 380px，居中于 panel 内 */
+  transform: translateX(50%) translateY(20px);
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  background: #6366f1;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 200;
+  white-space: nowrap;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(50%) translateY(0);
+}
+
+/* ===== Demo 控件（仅演示用，非插件 UI） ===== */
+.demo-controls {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+  width: 220px;
+}
+
+.demo-controls button {
+  padding: 8px 14px;
+  background: #2c2c2e;
+  border: 1px solid #4a4a4c;
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.demo-controls button:hover { background: #3c3c3e; }
+.demo-controls button.active { border-color: #6366f1; color: #a78bfa; }
+
+.demo-controls .title {
+  font-size: 11px;
+  color: #666;
+  padding: 4px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.demo-controls .divider {
+  height: 1px;
+  background: #3a3a3c;
+  margin: 4px 0;
+}
+
+.demo-controls .theme-row {
+  display: flex;
+  gap: 6px;
+}
+
+.demo-controls .theme-row button { flex: 1; text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- 演示控制按钮 -->
+<div class="demo-controls">
+  <div class="title">Demo 状态切换</div>
+  <button onclick="switchState('empty')" id="btn-empty">👋 空状态</button>
+  <button onclick="switchState('loading')" id="btn-loading">⏳ 阶段 1 提取中</button>
+  <button onclick="switchState('result-nokey')" id="btn-nokey">🔓 结果（无 Key）</button>
+  <button onclick="switchState('result-keyed')" id="btn-keyed" class="active">🔑 结果（有 Key，完整）</button>
+  <button onclick="playTwoPhase()" id="btn-twophase">▶️ 播放两阶段流程</button>
+  <div class="divider"></div>
+  <div class="title">主题（真实插件跟随系统）</div>
+  <div class="theme-row">
+    <button onclick="setTheme('light')" id="btn-light">☀️</button>
+    <button onclick="setTheme('dark')" id="btn-dark">🌙</button>
+    <button onclick="setTheme('system')" id="btn-system">⚙️ 系统</button>
+  </div>
+</div>
+
+<!-- 模拟目标网站 -->
+<div class="mock-website"></div>
+
+<!-- Side Panel -->
+<div class="side-panel show-result" id="sidePanel">
+
+  <!-- Header -->
+  <div class="panel-header">
+    <div class="logo">🔍</div>
+    <h1>StyleLens</h1>
+    <span class="url" id="panelUrl">stripe.com</span>
+  </div>
+
+  <!-- 空状态 -->
+  <div class="empty-view">
+    <svg width="120" height="90" viewBox="0 0 120 90" fill="none">
+      <!-- 极简线条插画：棱镜分光 -->
+      <path d="M10 45 L50 45" stroke="#6366f1" stroke-width="2" stroke-linecap="round"/>
+      <path d="M50 25 L80 45 L50 65 Z" stroke="#8b5cf6" stroke-width="2" fill="none" stroke-linejoin="round"/>
+      <path d="M80 45 L112 28" stroke="#f87171" stroke-width="2" stroke-linecap="round"/>
+      <path d="M80 45 L114 42" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/>
+      <path d="M80 45 L112 56" stroke="#34d399" stroke-width="2" stroke-linecap="round"/>
+      <path d="M80 45 L106 68" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <div class="empty-title">打开任意网站，点击分析即可提取设计 DNA</div>
+    <div class="empty-desc">
+      点击插件图标或按 <b>⌘/Ctrl + Shift + S</b>，<br>
+      一键提取颜色、字体、间距、圆角等设计规范。
+    </div>
+    <div class="empty-free">无需配置即可使用基础功能</div>
+  </div>
+
+  <!-- Loading 状态：分步反馈，色板先行渲染 -->
+  <div class="loading-view">
+    <div class="loading-step done" id="step-1">
+      <span class="dot"></span>
+      <span>正在提取 CSS 变量...</span>
+    </div>
+    <div class="loading-step active" id="step-2">
+      <span class="dot"></span>
+      <span>正在分析页面样式...</span>
+    </div>
+    <div class="loading-step pending" id="step-3">
+      <span class="dot"></span>
+      <span>正在生成设计规范...</span>
+    </div>
+
+    <!-- 色板先行渲染（阶段 1 即时反馈） -->
+    <div style="margin-top: 24px;">
+      <div style="font-size: 11px; color: var(--text-3); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">已提取色板</div>
+      <div class="color-palette">
+        <div class="color-swatch" style="background: #635bff;"></div>
+        <div class="color-swatch" style="background: #0a2540;"></div>
+        <div class="color-swatch" style="background: #00d4ff;"></div>
+        <div class="color-swatch" style="background: #ffffff;"></div>
+        <div class="color-swatch" style="background: #425466;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 结果视图 -->
+  <div class="result-view">
+
+    <!-- AI 区域（阶段 2 淡入；无 Key 时隐藏） -->
+    <div class="ai-zone" id="aiZone">
+      <!-- 风格标签 -->
+      <div class="style-tags" id="styleTags">
+        <span class="tag">#科技感极简</span>
+        <span class="tag">#渐变主导</span>
+        <span class="tag">#深色高端</span>
+      </div>
+    </div>
+
+    <!-- AI 解读骨架屏（阶段 2 进行中） -->
+    <div class="ai-skeleton" id="aiSkeleton">
+      <div class="sk-title"><span class="spinner"></span>正在生成 AI 设计解读...</div>
+      <div class="sk-line"></div>
+      <div class="sk-line"></div>
+      <div class="sk-line"></div>
+      <div class="sk-line"></div>
+    </div>
+
+    <!-- 无 Key 解锁引导卡片 -->
+    <div class="unlock-card" id="unlockCard" onclick="alert('跳转到 Options 页配置 Claude API Key')">
+      <div class="unlock-title">🔑 配置 API Key 解锁 AI 设计解读 →</div>
+      <div class="unlock-desc">了解这套设计背后的意图、风格定位，并获得可直接交给 AI Agent 的复现指令。</div>
+    </div>
+
+    <!-- Mood Board：背景 = 目标站主背景色，文字色按亮度自动计算 -->
+    <div class="mood-board" id="moodBoard">
+      <div class="mood-title" id="moodTitle">Stripe — 金融基础设施的设计语言</div>
+      <div class="intent" id="moodIntent">"通过深色背景+高饱和渐变色营造科技感与信任感，大量留白配合克制的配色传达专业与高端定位。"</div>
+
+      <div class="section-label">Color Palette</div>
+      <div class="color-palette" id="moodPalette">
+        <div class="color-swatch" style="background: #635bff;" data-css="color: #635BFF;" data-color="#635BFF"><span class="tooltip">#635BFF 主色</span></div>
+        <div class="color-swatch" style="background: #0a2540;" data-css="background-color: #0A2540;" data-color="#0A2540"><span class="tooltip">#0A2540 深底</span></div>
+        <div class="color-swatch" style="background: #00d4ff;" data-css="color: #00D4FF;" data-color="#00D4FF"><span class="tooltip">#00D4FF 强调</span></div>
+        <div class="color-swatch" style="background: #7c5cfc;" data-css="color: #7C5CFC;" data-color="#7C5CFC"><span class="tooltip">#7C5CFC 渐变</span></div>
+        <div class="color-swatch" style="background: #ffffff;" data-css="color: #FFFFFF;" data-color="#FFFFFF"><span class="tooltip">#FFFFFF 文字</span></div>
+        <div class="color-swatch" style="background: #425466;" data-css="color: #425466;" data-color="#425466"><span class="tooltip">#425466 次文字</span></div>
+        <div class="color-swatch" style="background: #adbdcc;" data-css="color: #ADBDCC;" data-color="#ADBDCC"><span class="tooltip">#ADBDCC 辅助</span></div>
+        <div class="color-swatch" style="background: #f6f9fc;" data-css="background-color: #F6F9FC;" data-color="#F6F9FC"><span class="tooltip">#F6F9FC 浅底</span></div>
+      </div>
+
+      <div class="font-preview">
+        <div class="section-label">Typography</div>
+        <div class="font-sample heading" data-css="font: 700 48px/1.2 Inter, sans-serif;">
+          <div class="name">标题 — Inter / 700 / 48-64px</div>
+          <div class="text">Financial infrastructure</div>
+        </div>
+        <div class="font-sample body" data-css="font: 400 17px/1.6 Inter, sans-serif;">
+          <div class="name">正文 — Inter / 400 / 17-19px</div>
+          <div class="text">Millions of companies use Stripe to accept payments</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 详细规范：折叠卡片组，整行可点击复制 CSS 声明 -->
+    <div class="details-section">
+
+      <div class="detail-group">
+        <div class="detail-group-header">
+          <span>颜色体系</span>
+          <span class="summary">5 个核心色</span>
+        </div>
+        <div class="detail-group-content">
+          <div class="token-row" data-css="color: #635BFF;" data-color="#635BFF">
+            <div class="token-color" style="background: #635bff;"></div>
+            <span class="token-label">Primary / Brand</span>
+            <span class="token-value">#635BFF</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="background-color: #0A2540;" data-color="#0A2540">
+            <div class="token-color" style="background: #0a2540;"></div>
+            <span class="token-label">Background / Dark</span>
+            <span class="token-value">#0A2540</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="color: #00D4FF;" data-color="#00D4FF">
+            <div class="token-color" style="background: #00d4ff;"></div>
+            <span class="token-label">Accent / Cyan</span>
+            <span class="token-value">#00D4FF</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="color: #425466;" data-color="#425466">
+            <div class="token-color" style="background: #425466;"></div>
+            <span class="token-label">Text / Secondary</span>
+            <span class="token-value">#425466</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="background-color: #F6F9FC;" data-color="#F6F9FC">
+            <div class="token-color" style="background: #f6f9fc;"></div>
+            <span class="token-label">Background / Light</span>
+            <span class="token-value">#F6F9FC</span>
+            <span class="copy-hint">复制</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-group">
+        <div class="detail-group-header">
+          <span>字体体系</span>
+          <span class="summary">Inter / H1 · H2 · 正文</span>
+        </div>
+        <div class="detail-group-content">
+          <div class="token-row" data-css="font: 700 48px/1.2 Inter, sans-serif;">
+            <span class="token-label">H1 标题</span>
+            <span class="token-value">Inter · 700 · 48px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="font: 600 24px/1.3 Inter, sans-serif;">
+            <span class="token-label">H2 小标题</span>
+            <span class="token-value">Inter · 600 · 24px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="font: 400 17px/1.6 Inter, sans-serif;">
+            <span class="token-label">正文</span>
+            <span class="token-value">Inter · 400 · 17px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-group">
+        <div class="detail-group-header">
+          <span>间距体系</span>
+          <span class="summary">基础单元 4px</span>
+        </div>
+        <div class="detail-group-content">
+          <div class="token-row" data-css="gap: 4px;">
+            <span class="token-label">基础单元</span>
+            <span class="token-value">4px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="gap: 16px;">
+            <span class="token-label">组件间距</span>
+            <span class="token-value">16px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="gap: 32px;">
+            <span class="token-label">卡片间距</span>
+            <span class="token-value">32px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="padding: 80px 0;">
+            <span class="token-label">Section 间距</span>
+            <span class="token-value">80px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-group">
+        <div class="detail-group-header">
+          <span>圆角与阴影</span>
+          <span class="summary">12px / 8px / 柔和阴影</span>
+        </div>
+        <div class="detail-group-content">
+          <div class="token-row" data-css="border-radius: 12px;">
+            <span class="token-label">卡片圆角</span>
+            <span class="token-value">12px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="border-radius: 8px;">
+            <span class="token-label">按钮圆角</span>
+            <span class="token-value">8px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+            <span class="token-label">阴影</span>
+            <span class="token-value">0 2px 8px rgba(0,0,0,0.08)</span>
+            <span class="copy-hint">复制</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-group">
+        <div class="detail-group-header">
+          <span>布局体系</span>
+          <span class="summary">1080px / Grid + Flex</span>
+        </div>
+        <div class="detail-group-content">
+          <div class="token-row" data-css="max-width: 1080px;">
+            <span class="token-label">Max Width</span>
+            <span class="token-value">1080px</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="display: grid;">
+            <span class="token-label">布局模式</span>
+            <span class="token-value">CSS Grid + Flexbox</span>
+            <span class="copy-hint">复制</span>
+          </div>
+          <div class="token-row" data-css="@media (min-width: 768px) { }">
+            <span class="token-label">断点</span>
+            <span class="token-value">640 / 768 / 1024 / 1280</span>
+            <span class="copy-hint">复制</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 底部操作栏 -->
+  <div class="action-bar">
+    <button class="btn btn-secondary" onclick="reanalyze()">🔄 重新分析</button>
+    <button class="btn btn-primary" onclick="exportMD()">📄 导出 MD</button>
+  </div>
+
+  <!-- Toast：背景色 = 复制的颜色值 -->
+  <div class="toast" id="toast">✓ 已复制</div>
+
+</div>
+
+<script>
+/* ============================================================
+ * Mock 数据 —— 对应文档 5.2 统一数据结构（Single Source of Truth）
+ * 真实插件中由 content.js 提取、background.js 中转后传入
+ * ============================================================ */
+const extractedData = {
+  url: 'stripe.com',
+  title: 'Stripe',
+  dominantBgColor: '#0A2540', // mood board 自适应背景
+  hasApiKey: true,            // demo 用，真实插件读 chrome.storage.sync
+  tokens: { /* colors / typography / spacing / radius / shadows，均含预拼好的 css 字段 */ },
+  layout: { maxWidth: '1080px', mode: 'grid', breakpoints: ['640px', '768px', '1024px', '1280px'] },
+  analysis: {
+    tags: ['#科技感极简', '#渐变主导', '#深色高端'],
+    intent: '"通过深色背景+高饱和渐变色营造科技感与信任感，大量留白配合克制的配色传达专业与高端定位。"',
+    agentSuggestions: '/* Tailwind config / CSS 变量建议，见导出 MD */'
+  }
+};
+
+const panel = document.getElementById('sidePanel');
+let toastTimer = null;
+
+/* ===== 状态切换 ===== */
+function switchState(state) {
+  panel.classList.remove('show-empty', 'show-loading', 'show-result');
+  // 只重置状态按钮的 active，不影响主题切换按钮
+  document.querySelectorAll('.demo-controls > button').forEach(b => b.classList.remove('active'));
+
+  const aiZone = document.getElementById('aiZone');
+  const skeleton = document.getElementById('aiSkeleton');
+  const unlock = document.getElementById('unlockCard');
+  aiZone.style.display = 'none';
+  skeleton.style.display = 'none';
+  unlock.style.display = 'none';
+
+  if (state === 'empty') {
+    panel.classList.add('show-empty');
+    document.getElementById('btn-empty').classList.add('active');
+    return;
+  }
+
+  if (state === 'loading') {
+    panel.classList.add('show-loading');
+    document.getElementById('btn-loading').classList.add('active');
+    return;
+  }
+
+  // 结果视图
+  panel.classList.add('show-result');
+
+  if (state === 'result-nokey') {
+    // 无 Key：阶段 1 即最终状态，显示解锁引导卡片
+    extractedData.hasApiKey = false;
+    unlock.style.display = 'block';
+    document.getElementById('btn-nokey').classList.add('active');
+  } else if (state === 'result-keyed') {
+    // 有 Key：完整结果（AI 区域淡入后的最终形态）
+    extractedData.hasApiKey = true;
+    aiZone.style.display = 'block';
+    document.getElementById('btn-keyed').classList.add('active');
+  } else if (state === 'result-ai-loading') {
+    // 有 Key 阶段 2 进行中：tokens 已就绪 + AI 骨架屏
+    extractedData.hasApiKey = true;
+    skeleton.style.display = 'block';
+  }
+}
+
+/* ===== 两阶段流程演示：提取(<1s) → AI 解读淡入(3-8s) ===== */
+function playTwoPhase() {
+  switchState('loading');
+  const step1 = document.getElementById('step-1');
+  const step2 = document.getElementById('step-2');
+  const step3 = document.getElementById('step-3');
+  step1.className = 'loading-step done';
+  step2.className = 'loading-step active';
+  step3.className = 'loading-step pending';
+
+  // 阶段 1：约 1s 后 tokens 就绪
+  setTimeout(() => {
+    extractedData.hasApiKey = true;
+    switchState('result-ai-loading');
+  }, 1200);
+
+  // 阶段 2：约 3s 后 AI 解读淡入
+  setTimeout(() => {
+    switchState('result-keyed');
+    const aiZone = document.getElementById('aiZone');
+    aiZone.classList.remove('fade-in');
+    void aiZone.offsetWidth; // 重置动画
+    aiZone.classList.add('fade-in');
+  }, 4200);
+}
+
+/* ===== 主题切换（真实插件：纯 CSS prefers-color-scheme，零 JS） ===== */
+function setTheme(mode) {
+  if (mode === 'system') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', mode);
+  }
+  ['btn-light', 'btn-dark', 'btn-system'].forEach(id => document.getElementById(id).classList.remove('active'));
+  document.getElementById('btn-' + mode).classList.add('active');
+}
+
+/* ===== Mood Board 自适应：背景 = 目标站主背景色，文字色按亮度计算 ===== */
+function applyMoodBoard(bgColor) {
+  const board = document.getElementById('moodBoard');
+  board.style.background = bgColor;
+  const textColor = luminance(bgColor) > 0.5 ? '#1a1a1a' : '#ffffff';
+  board.style.color = textColor;
+}
+
+function luminance(hex) {
+  const n = hex.replace('#', '');
+  const r = parseInt(n.substr(0, 2), 16) / 255;
+  const g = parseInt(n.substr(2, 2), 16) / 255;
+  const b = parseInt(n.substr(4, 2), 16) / 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+/* ===== 全局一键复制：整行可点击，复制预拼好的 CSS 声明 ===== */
+function copyCss(css, colorHex) {
+  navigator.clipboard.writeText(css).catch(() => {});
+  showToast(css, colorHex);
+}
+
+function showToast(css, colorHex) {
+  const toast = document.getElementById('toast');
+  // 背景色 = 当前复制的颜色值；非颜色类用品牌紫
+  toast.style.background = colorHex && colorHex.toLowerCase() !== '#ffffff' ? colorHex : '#6366f1';
+  toast.style.color = colorHex && luminance(colorHex) > 0.5 ? '#1a1a1a' : '#ffffff';
+  toast.textContent = '✓ 已复制 ' + (css.length > 26 ? css.slice(0, 26) + '…' : css);
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 800); // 0.8s 自动消失
+}
+
+document.addEventListener('click', e => {
+  // token 行整行可点击
+  const row = e.target.closest('.token-row');
+  if (row) {
+    copyCss(row.dataset.css, row.dataset.color);
+    return;
+  }
+  // mood board 色块
+  const swatch = e.target.closest('.color-swatch');
+  if (swatch && swatch.dataset.css) {
+    copyCss(swatch.dataset.css, swatch.dataset.color);
+    return;
+  }
+  // 字体预览行
+  const sample = e.target.closest('.font-sample');
+  if (sample && sample.dataset.css) {
+    copyCss(sample.dataset.css, null);
+  }
+});
+
+/* ===== 折叠/展开 ===== */
+document.querySelectorAll('.detail-group-header').forEach(header => {
+  header.addEventListener('click', () => {
+    const content = header.nextElementSibling;
+    const isHidden = content.style.display === 'none';
+    content.style.display = isHidden ? 'block' : 'none';
+    header.classList.toggle('collapsed', !isHidden);
+  });
+});
+
+/* ===== 重新分析 ===== */
+function reanalyze() {
+  playTwoPhase();
+}
+
+/* ============================================================
+ * 导出 MD —— 同一数据对象生成，有/无 Key 两个版本
+ * 有 Key：含 AI 设计意图 + Agent 指令建议
+ * 无 Key：仅精确数值，不含 AI 解读部分
+ * ============================================================ */
+function exportMD() {
+  const withAI = extractedData.hasApiKey;
+  const date = new Date().toISOString().split('T')[0];
+
+  // 文档模板：每个表格都含 CSS 声明列
+  let md = `<!-- 本文件由 StyleLens 自动生成，可直接作为 AI 编程助手的设计约束使用 -->
+<!-- 使用方式：将本文件放入项目根目录，在 prompt 中引用即可 -->
+
+# Stripe.com 设计规范
+
+> ${withAI ? '通过深色背景+高饱和渐变色营造科技感与信任感，大量留白配合克制的配色传达专业与高端定位。' : '（配置 API Key 后可生成设计意图概述）'}
+
+${withAI ? '**风格标签：** #科技感极简 #渐变主导 #深色高端' : ''}
+
+---
+`;
+
+  if (withAI) {
+    md += `
+## 设计意图
+
+Stripe 的设计语言围绕"专业、信任、创新"三个关键词展开。深色背景（#0A2540）奠定了沉稳专业的基调，品牌紫（#635BFF）和渐变色作为视觉焦点制造层次感和动态感。大面积留白和克制的色彩使用暗示了企业级产品的专业性，字体选择 Inter 兼顾了现代感和极佳的屏幕可读性。
+`;
+  }
+
+  md += `
+## Design Tokens
+
+### 颜色体系
+
+| 用途 | 色值 | CSS 声明 |
+|------|------|----------|
+| 主色/品牌色 | #635BFF | \`color: #635BFF;\` |
+| 深色背景 | #0A2540 | \`background-color: #0A2540;\` |
+| 强调色 | #00D4FF | \`color: #00D4FF;\` |
+| 渐变辅助 | #7C5CFC | \`color: #7C5CFC;\` |
+| 文字/白 | #FFFFFF | \`color: #FFFFFF;\` |
+| 次级文字 | #425466 | \`color: #425466;\` |
+| 辅助灰 | #ADBDCC | \`color: #ADBDCC;\` |
+| 浅色背景 | #F6F9FC | \`background-color: #F6F9FC;\` |
+
+### 字体体系
+
+| 层级 | 字体 | 字号 | 字重 | CSS 声明 |
+|------|------|------|------|----------|
+| Hero 标题 | Inter | 64px | 700 | \`font: 700 64px/1.1 Inter, sans-serif;\` |
+| Section 标题 | Inter | 48px | 700 | \`font: 700 48px/1.2 Inter, sans-serif;\` |
+| 小标题 | Inter | 24px | 600 | \`font: 600 24px/1.3 Inter, sans-serif;\` |
+| 正文 | Inter | 17px | 400 | \`font: 400 17px/1.6 Inter, sans-serif;\` |
+
+### 间距体系
+
+| 用途 | 值 | CSS 声明 |
+|------|-----|----------|
+| 基础单元 | 4px | \`gap: 4px;\` |
+| 组件间距 | 16px | \`gap: 16px;\` |
+| 卡片间距 | 32px | \`gap: 32px;\` |
+| Section 间距 | 80px | \`padding: 80px 0;\` |
+
+### 圆角与阴影
+
+| 用途 | 值 | CSS 声明 |
+|------|-----|----------|
+| 卡片圆角 | 12px | \`border-radius: 12px;\` |
+| 按钮圆角 | 8px | \`border-radius: 8px;\` |
+| 阴影 | 0 2px 8px rgba(0,0,0,0.08) | \`box-shadow: 0 2px 8px rgba(0,0,0,0.08);\` |
+
+## 布局体系
+
+| 属性 | 值 | CSS 声明 |
+|------|-----|----------|
+| 最大宽度 | 1080px | \`max-width: 1080px;\` |
+| 布局模式 | Grid + Flexbox | \`display: grid;\` |
+| 断点 | 640/768/1024/1280 | \`@media (min-width: 768px)\` |
+`;
+
+  if (withAI) {
+    md += `
+## 给 AI Agent 的指令建议
+
+### Tailwind CSS 配置参考
+
+\`\`\`js
+// tailwind.config.js
+module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        primary: '#635BFF',
+        'dark-bg': '#0A2540',
+        accent: '#00D4FF',
+        'light-bg': '#F6F9FC',
+        'text-secondary': '#425466',
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+      },
+      borderRadius: {
+        card: '12px',
+        btn: '8px',
+      },
+      maxWidth: {
+        content: '1080px',
+      },
+    },
+  },
+}
+\`\`\`
+
+### CSS 变量参考
+
+\`\`\`css
+:root {
+  --color-primary: #635BFF;
+  --color-dark-bg: #0A2540;
+  --color-accent: #00D4FF;
+  --color-light-bg: #F6F9FC;
+  --color-text-secondary: #425466;
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --radius-card: 12px;
+  --radius-btn: 8px;
+  --space-unit: 4px;
+  --max-width: 1080px;
+}
+\`\`\`
+`;
+  }
+
+  md += `
+---
+
+*Generated by StyleLens | stripe.com | ${date}*
+`;
+
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'stripe-design-spec.md';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ===== 初始化：Mood Board 自适应目标站背景色 ===== */
+applyMoodBoard(extractedData.dominantBgColor);
+switchState('result-keyed');
+</script>
+</body>
+</html>

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StyleLens 设置</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8;
+    --card: #ffffff;
+    --border: #e3e3e6;
+    --text-1: #1a1a1c;
+    --text-2: #55555c;
+    --text-3: #999aa0;
+    --brand: #6366f1;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141416;
+      --card: #1f1f22;
+      --border: #2c2c2e;
+      --text-1: #f0f0f0;
+      --text-2: #bbbbbf;
+      --text-3: #80808a;
+    }
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text-1);
+    display: flex;
+    justify-content: center;
+    padding: 60px 20px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 560px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
+  .logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
+
+  h1 { font-size: 20px; }
+
+  .desc {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-2);
+    margin: 12px 0 24px;
+  }
+
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 14px 0 8px;
+  }
+
+  input, select {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text-1);
+    outline: none;
+  }
+
+  input.mono { font-family: 'SF Mono', 'Fira Code', monospace; }
+
+  input:focus, select:focus { border-color: var(--brand); }
+
+  /* 供应商切换 */
+  .provider-switch {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .provider-switch button {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .provider-switch button.active {
+    border-color: var(--brand);
+    color: var(--brand);
+    background: color-mix(in srgb, var(--brand) 8%, transparent);
+  }
+
+  .actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+
+  .actions button {
+    flex: 1;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+
+  .actions button:hover { opacity: 0.85; }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+  }
+
+  .btn-secondary {
+    background: var(--bg);
+    color: var(--text-2);
+    border: 1px solid var(--border) !important;
+  }
+
+  .status {
+    margin-top: 14px;
+    font-size: 12px;
+    min-height: 18px;
+    color: #22c55e;
+  }
+
+  .status.error { color: #ef4444; }
+
+  .hint {
+    margin-top: 20px;
+    padding: 12px 14px;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text-3);
+  }
+
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="head">
+    <div class="logo">🔍</div>
+    <h1>StyleLens 设置</h1>
+  </div>
+
+  <p class="desc">
+    无需配置即可使用基础功能（token 提取 + 复制 + 导出）。<br>
+    配置 AI 后解锁设计解读：设计意图、风格标签、Agent 指令建议。
+  </p>
+
+  <label>AI 供应商</label>
+  <div class="provider-switch">
+    <button id="provAnthropic" type="button">Anthropic Claude</button>
+    <button id="provOpenai" type="button">OpenAI 兼容协议</button>
+  </div>
+
+  <!-- Anthropic -->
+  <div id="secAnthropic">
+    <label for="anthropicKey">Claude API Key</label>
+    <input class="mono" type="password" id="anthropicKey" placeholder="sk-ant-..." autocomplete="off">
+  </div>
+
+  <!-- OpenAI 兼容 -->
+  <div id="secOpenai" hidden>
+    <label for="preset">常见供应商预设</label>
+    <select id="preset">
+      <option value="custom">自定义</option>
+      <option value="openai">OpenAI</option>
+      <option value="moonshot">Moonshot Kimi</option>
+      <option value="qwen">通义千问 Qwen</option>
+      <option value="zhipu">智谱 GLM</option>
+      <option value="openrouter">OpenRouter</option>
+    </select>
+
+    <label for="openaiBaseUrl">API Base URL</label>
+    <input class="mono" type="text" id="openaiBaseUrl" placeholder="https://api.openai.com/v1" autocomplete="off">
+
+    <label for="openaiModel">模型名称（需支持视觉）</label>
+    <input class="mono" type="text" id="openaiModel" placeholder="如 gpt-4o / kimi-k3 / qwen-vl-max" autocomplete="off">
+
+    <label for="openaiKey">API Key</label>
+    <input class="mono" type="password" id="openaiKey" placeholder="sk-..." autocomplete="off">
+  </div>
+
+  <div class="actions">
+    <button class="btn-primary" id="saveBtn" type="button">保存</button>
+    <button class="btn-secondary" id="testBtn" type="button">测试连接</button>
+    <button class="btn-secondary" id="clearBtn" type="button">清除</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div class="hint">
+    📷 AI 解读会发送页面截图，请选择支持视觉的模型
+    （claude-sonnet / gpt-4o / kimi-k3 / qwen-vl-max / glm-4v 等）。<br>
+    🔒 Key 仅存储在浏览器本地（chrome.storage.sync），只用于直接调用对应 API，不会上传任何其他服务器。
+  </div>
+</div>
+
+<script src="options.js"></script>
+</body>
+</html>

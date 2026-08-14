@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# 测试/验证截图（临时产物，不入库）
+verify-*.png
+*-state-check.png
+
+# 编辑器
+.idea/
+.vscode/
+*.log

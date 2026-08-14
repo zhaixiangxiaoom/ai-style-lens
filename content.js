@@ -1,0 +1,422 @@
+// StyleLens content script —— 设计元素提取，按需注入目标页面
+// 提取策略（见产品设计文档 §4）：
+//   1. CSS 变量优先：:root / [data-theme] 的 custom properties
+//   2. Computed Styles 兜底：可见视口内元素采样，语义标签优先
+//   3. 采样而非全量：限制样本数，避免卡主线程
+//   4. 聚合降噪：频次统计 + 去重，只保留 Top-N 高频值
+(() => {
+  if (window.__stylelensInjected) return;
+  window.__stylelensInjected = true;
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg && msg.type === 'STYLELENS_EXTRACT') {
+      try {
+        sendResponse({ ok: true, data: extract() });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    }
+    return true;
+  });
+
+  /* ================= 工具函数 ================= */
+
+  const probe = document.createElement('span').style;
+
+  function isColor(v) {
+    if (!v || v === 'none' || v === 'transparent') return false;
+    // var() 引用在 CSSOM 中对任何属性都“解析期合法”，必须先解析再判断
+    if (/var\(/i.test(v)) return false;
+    probe.color = '';
+    probe.color = v;
+    return probe.color !== '';
+  }
+
+  // rgb()/rgba() -> #HEX，带透明度保留 rgba 形式
+  // lab()/oklab()/oklch() 等现代色函数借助 canvas 转 hex（Tailwind v4 常见）
+  const colorCanvas = document.createElement('canvas');
+  colorCanvas.width = colorCanvas.height = 1;
+  const colorCtx = colorCanvas.getContext('2d', { willReadFrequently: true });
+
+  function toHex(v) {
+    if (!v) return v;
+    const m = String(v).match(/rgba?\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].split(/[,/\s]+/).filter(Boolean).map(parseFloat);
+      const [r, g, b, a] = parts;
+      if (parts.length > 3 && a < 1) return `rgba(${r},${g},${b},${a})`;
+      const h = n => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0');
+      return ('#' + h(r) + h(g) + h(b)).toUpperCase();
+    }
+    try {
+      colorCtx.clearRect(0, 0, 1, 1);
+      colorCtx.fillStyle = '#010101'; // 哨兵值：非法输入不会覆盖
+      colorCtx.fillStyle = v;
+      colorCtx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = colorCtx.getImageData(0, 0, 1, 1).data;
+      if (a === 0) return String(v).toUpperCase();
+      const h = n => n.toString(16).padStart(2, '0');
+      return ('#' + h(r) + h(g) + h(b)).toUpperCase();
+    } catch {
+      return String(v).toUpperCase();
+    }
+  }
+
+  function isTransparent(v) {
+    return !v || v === 'transparent' || /rgba?\([^)]*,\s*0\s*\)/.test(v);
+  }
+
+  function isVisible(el) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) return false;
+    if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
+  }
+
+  // 只取可见视口内元素，限制样本数避免卡主线程
+  function collectSamples(limit = 400) {
+    const out = [];
+    for (const el of document.querySelectorAll('body *')) {
+      if (out.length >= limit) break;
+      if (isVisible(el)) out.push(el);
+    }
+    return out;
+  }
+
+  function walkRules(rules, visit) {
+    for (const rule of rules) {
+      visit(rule);
+      if (rule.cssRules && rule.cssRules.length) walkRules(rule.cssRules, visit);
+    }
+  }
+
+  function safeRules(sheet) {
+    try { return sheet.cssRules; } catch { return null; } // 跨域样式表跳过
+  }
+
+  function gcd(a, b) { return b ? gcd(b, a % b) : a; }
+
+  /* ================= 颜色 ================= */
+
+  // 1) CSS 变量优先（var() 引用递归解析后再判断颜色，避免字体等非色变量混入）
+  function extractCssVarColors() {
+    const vars = new Map();
+    for (const sheet of document.styleSheets) {
+      const rules = safeRules(sheet);
+      if (!rules) continue;
+      walkRules(rules, rule => {
+        if (!rule.style || !rule.selectorText) return;
+        if (!/(^|[,}\s])(:root|\[data-theme[^\]]*\])/.test(rule.selectorText)) return;
+        for (const prop of rule.style) {
+          if (prop.startsWith('--')) {
+            vars.set(prop, rule.style.getPropertyValue(prop).trim());
+          }
+        }
+      });
+    }
+    const resolve = (v, depth) => {
+      const m = /^var\(\s*(--[\w-]+)\s*(?:,\s*([^)]+))?\)$/.exec(v || '');
+      if (!m || depth >= 3) return v;
+      return resolve(vars.get(m[1]) || (m[2] || '').trim() || v, depth + 1);
+    };
+    const list = [];
+    const seen = new Set();
+    for (const [prop, raw] of vars) {
+      const resolved = resolve(raw, 0);
+      if (!isColor(resolved)) continue;
+      const value = toHex(resolved);
+      const key = value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const name = prop.slice(2);
+      const decl = /bg|background|surface|fill/i.test(name) ? 'background-color' : 'color';
+      list.push({ name, value, css: `${decl}: ${value};` });
+    }
+    return list;
+  }
+
+  // 2) 页面高频色兜底（Top10）
+  function extractFrequentColors(samples) {
+    const freq = new Map();
+    for (const el of samples) {
+      const cs = getComputedStyle(el);
+      const pairs = [[cs.backgroundColor, 'bg'], [cs.color, 'text']];
+      for (const [raw, kind] of pairs) {
+        if (isTransparent(raw)) continue;
+        const value = toHex(raw);
+        const key = value.toLowerCase();
+        const e = freq.get(key) || { count: 0, kind, value };
+        e.count++;
+        freq.set(key, e);
+      }
+    }
+    return [...freq.values()].sort((a, b) => b.count - a.count);
+  }
+
+  function extractColors(samples) {
+    const colors = extractCssVarColors();
+    const seen = new Set(colors.map(c => c.value.toLowerCase()));
+    for (const item of extractFrequentColors(samples)) {
+      if (colors.length >= 10) break;
+      const key = item.value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      colors.push({
+        name: item.kind === 'bg' ? 'Background ' + item.value : 'Text ' + item.value,
+        value: item.value,
+        css: (item.kind === 'bg' ? 'background-color: ' : 'color: ') + item.value + ';'
+      });
+    }
+    return colors.slice(0, 10);
+  }
+
+  /* ================= 字体（语义标签采样） ================= */
+
+  const TYPO_LEVELS = [
+    ['H1', 'h1'], ['H2', 'h2'], ['H3', 'h3'], ['H4', 'h4'],
+    ['正文', 'p'], ['链接', 'a'], ['按钮', 'button']
+  ];
+
+  function extractTypography(samples) {
+    const out = [];
+    // 标题不要求视口内（可能在首屏外），只要求渲染可见
+    const rendered = el => {
+      const cs = getComputedStyle(el);
+      return cs.display !== 'none' && cs.visibility !== 'hidden' && parseFloat(cs.fontSize) > 0;
+    };
+    const push = (level, el) => {
+      const cs = getComputedStyle(el);
+      const size = parseFloat(cs.fontSize);
+      const lh = cs.lineHeight === 'normal' ? 1.5 : Math.round((parseFloat(cs.lineHeight) / size) * 10) / 10;
+      out.push({
+        level,
+        family: cs.fontFamily.split(',')[0].replace(/['"]/g, '').trim(),
+        size: cs.fontSize,
+        weight: cs.fontWeight,
+        css: `font: ${cs.fontWeight} ${cs.fontSize}/${lh} ${cs.fontFamily};`
+      });
+    };
+    for (const [level, sel] of TYPO_LEVELS) {
+      if (level === '正文') {
+        // 正文取可见 p 中出现最多的字号，避免取到注释/角标等小字
+        const stats = new Map();
+        for (const p of document.querySelectorAll('p')) {
+          if (!isVisible(p)) continue;
+          const cs = getComputedStyle(p);
+          const k = `${cs.fontSize}|${cs.fontWeight}|${cs.fontFamily}`;
+          const e = stats.get(k) || { count: 0, el: p };
+          e.count++;
+          stats.set(k, e);
+        }
+        const top = [...stats.values()].sort((a, b) => b.count - a.count)[0];
+        if (top) push('正文', top.el);
+        continue;
+      }
+      const isHead = /^H\d/.test(level);
+      const el = [...document.querySelectorAll(sel)].find(e => (isHead ? rendered(e) : isVisible(e)));
+      if (el) push(level, el);
+    }
+
+    // 无语义标签页面（纯 div/span 构建）：按字号频次推断层级
+    if (samples && samples.length) {
+      const stats = new Map();
+      for (const el of samples) {
+        if (!(el.textContent || '').trim()) continue;
+        const cs = getComputedStyle(el);
+        const k = `${cs.fontSize}|${cs.fontWeight}|${cs.fontFamily}`;
+        const e = stats.get(k) || { count: 0, el };
+        e.count++;
+        stats.set(k, e);
+      }
+      const entries = [...stats.values()];
+      if (entries.length) {
+        const bodyEntry = entries.slice().sort((a, b) => b.count - a.count)[0];
+        if (!out.some(t => t.level === '正文')) push('正文', bodyEntry.el);
+        if (!out.some(t => /^H\d/.test(t.level))) {
+          const bodySize = parseFloat(getComputedStyle(bodyEntry.el).fontSize);
+          const head = entries
+            .filter(e => parseFloat(getComputedStyle(e.el).fontSize) > bodySize * 1.15)
+            .sort((a, b) => parseFloat(getComputedStyle(b.el).fontSize) - parseFloat(getComputedStyle(a.el).fontSize))[0];
+          if (head) push('H1', head.el);
+        }
+      }
+    }
+
+    const ORDER = ['H1', 'H2', 'H3', 'H4', '正文', '链接', '按钮'];
+    out.sort((a, b) => ORDER.indexOf(a.level) - ORDER.indexOf(b.level));
+    return out;
+  }
+
+  /* ================= 间距（频次统计 + GCD 推算基础单元） ================= */
+
+  function extractSpacing(samples) {
+    const freq = new Map();
+    const push = v => {
+      const n = Math.round(parseFloat(v));
+      if (!n || n <= 0 || n > 200) return;
+      freq.set(n, (freq.get(n) || 0) + 1);
+    };
+    for (const el of samples) {
+      const cs = getComputedStyle(el);
+      [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft,
+       cs.marginTop, cs.marginRight, cs.marginBottom, cs.marginLeft, cs.gap]
+        .forEach(v => String(v).split(/\s+/).forEach(push));
+    }
+    const entries = [...freq.entries()].sort((a, b) => b[1] - a[1]);
+    // 基础单元优先用高频值（count≥2）推算，避免偶发值拖小单元
+    const stable = entries.filter(([, c]) => c >= 2);
+    const top = (stable.length >= 3 ? stable : entries)
+      .slice(0, 6)
+      .map(e => e[0])
+      .sort((a, b) => a - b);
+    if (!top.length) return [];
+    const unit = top.reduce((a, b) => gcd(a, b)) || top[0];
+    const rows = [{ name: '基础单元', value: unit + 'px', css: `gap: ${unit}px;` }];
+    for (const v of top) {
+      if (v === unit) continue;
+      rows.push({ name: '常用间距', value: v + 'px', css: `gap: ${v}px;` });
+    }
+    return rows;
+  }
+
+  /* ================= 圆角 ================= */
+
+  function radiusName(value, el) {
+    if (value >= 999) return '胶囊';
+    const cls = (typeof el.className === 'string' ? el.className : '') + ' ' + el.tagName;
+    if (/btn|button/i.test(cls)) return '按钮';
+    if (/card|panel|modal|dialog/i.test(cls)) return '卡片';
+    if (/input|field|select/i.test(cls)) return '输入框';
+    return `圆角 ${value}px`;
+  }
+
+  function extractRadius(samples) {
+    const freq = new Map();
+    for (const el of samples) {
+      const n = Math.round(parseFloat(getComputedStyle(el).borderRadius));
+      if (!n) continue;
+      const e = freq.get(n) || { count: 0, el };
+      e.count++;
+      freq.set(n, e);
+    }
+    const used = new Set();
+    return [...freq.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 3)
+      .map(([value, e]) => {
+        let name = radiusName(value, e.el);
+        if (used.has(name)) name = `圆角 ${value}px`;
+        used.add(name);
+        return { name, value: value + 'px', css: `border-radius: ${value}px;` };
+      });
+  }
+
+  /* ================= 阴影 ================= */
+
+  // 按括号深度拆分阴影层（rgba 内含逗号）
+  function splitShadowLayers(v) {
+    const out = [];
+    let depth = 0, cur = '';
+    for (const ch of v) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+
+  // 剥离全透明占位层（Tailwind shadow 变量常见噪声）
+  function cleanShadow(v) {
+    return splitShadowLayers(v)
+      .filter(layer => !/rgba?\([^)]*,\s*0\s*\)/.test(layer))
+      .join(', ');
+  }
+
+  function extractShadows(samples) {
+    const freq = new Map();
+    for (const el of samples) {
+      const raw = getComputedStyle(el).boxShadow;
+      if (!raw || raw === 'none') continue;
+      const v = cleanShadow(raw);
+      if (!v) continue;
+      freq.set(v, (freq.get(v) || 0) + 1);
+    }
+    return [...freq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([value], i) => ({
+        name: i === 0 ? '默认' : `阴影 ${i + 1}`,
+        value,
+        css: `box-shadow: ${value};`
+      }));
+  }
+
+  /* ================= 布局 ================= */
+
+  function extractBreakpoints() {
+    const set = new Set();
+    for (const sheet of document.styleSheets) {
+      const rules = safeRules(sheet);
+      if (!rules) continue;
+      walkRules(rules, rule => {
+        const cond = rule.conditionText || (rule.media && rule.media.mediaText) || '';
+        const matches = String(cond).match(/(?:min|max)-width:\s*(\d+)px/g) || [];
+        for (const m of matches) set.add(parseInt(m.match(/(\d+)px/)[1], 10));
+      });
+    }
+    return [...set].sort((a, b) => a - b).slice(0, 6).map(v => v + 'px');
+  }
+
+  function extractLayout(samples) {
+    let grid = 0, flex = 0;
+    const widths = new Map();
+    for (const el of samples) {
+      const cs = getComputedStyle(el);
+      if (el.children.length >= 2) {
+        if (cs.display === 'grid') grid++;
+        else if (cs.display.includes('flex')) flex++;
+      }
+      const mw = parseFloat(cs.maxWidth);
+      if (mw >= 600 && mw <= 2000) widths.set(mw, (widths.get(mw) || 0) + 1);
+    }
+    const topWidth = [...widths.entries()].sort((a, b) => b[1] - a[1])[0];
+    return {
+      maxWidth: topWidth ? topWidth[0] + 'px' : null,
+      mode: grid > 0 && grid >= flex ? 'grid' : (flex > 0 ? 'flex' : 'block'),
+      breakpoints: extractBreakpoints()
+    };
+  }
+
+  /* ================= 页面主背景色（Mood Board 自适应） ================= */
+
+  function extractDominantBg() {
+    for (const el of [document.body, document.documentElement]) {
+      if (!el) continue;
+      const bg = getComputedStyle(el).backgroundColor;
+      if (!isTransparent(bg)) return toHex(bg);
+    }
+    return '#FFFFFF';
+  }
+
+  /* ================= 汇总 ================= */
+
+  function extract() {
+    const samples = collectSamples();
+    return {
+      url: location.href,
+      title: document.title,
+      dominantBgColor: extractDominantBg(),
+      tokens: {
+        colors: extractColors(samples),
+        typography: extractTypography(samples),
+        spacing: extractSpacing(samples),
+        radius: extractRadius(samples),
+        shadows: extractShadows(samples)
+      },
+      layout: extractLayout(samples)
+    };
+  }
+})();
