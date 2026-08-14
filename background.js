@@ -34,6 +34,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return false;
 });
 
+// 面板在 AI 生成期间保持开放连接：防止 Service Worker 在长流式请求中被终止
+chrome.runtime.onConnect.addListener(() => {});
+
 /* ===== 阶段 1：提取 + 截图 ===== */
 
 async function handleAnalyze() {
@@ -50,17 +53,22 @@ async function handleAnalyze() {
     }
 
     let screenshot = null;
+    let screenshotError = '';
     try {
       screenshot = await chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 80 });
-    } catch { /* 截图失败不阻塞阶段 1 */ }
+    } catch (err) {
+      // 截图失败不阻塞阶段 1，但记录原因便于 AI 未启动时诊断
+      screenshotError = String((err && err.message) || err);
+    }
 
     const cfg = await getAIConfig();
     const hasKey = aiReady(cfg);
+    const aiStarted = hasKey && !!screenshot;
 
     // 阶段 2：已配置且有截图时异步启动，不阻塞阶段 1 返回
-    if (hasKey && screenshot) runAI(cfg, resp.data, screenshot);
+    if (aiStarted) runAI(cfg, resp.data, screenshot);
 
-    return { ok: true, data: resp.data, screenshot, hasKey };
+    return { ok: true, data: resp.data, screenshot, hasKey, aiStarted, screenshotError };
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
@@ -88,28 +96,44 @@ function aiReady(cfg) {
     : !!(cfg.openaiKey && cfg.openaiModel);
 }
 
-/* ===== 阶段 2：按供应商分发（Streaming，避免 SW 30s idle timeout） ===== */
+/* ===== 阶段 2：按供应商分发（Streaming + 空闲超时控制，避免面板永久 loading） ===== */
+
+// 无数据超时：持续无新数据超过该时长才中止。
+// 不用固定总时长：VL 模型全量解读需 60~90s，只要 token 在持续流式返回就应继续等待
+const AI_IDLE_TIMEOUT_MS = 90000;
 
 async function runAI(cfg, data, screenshot) {
   chrome.runtime.sendMessage({ type: 'AI_START' }).catch(() => {});
   try {
     const image = await prepareImage(screenshot);
+    const controller = new AbortController();
+    let timer = setTimeout(() => controller.abort(), AI_IDLE_TIMEOUT_MS);
+    // 每收到数据重置空闲计时，并通知面板重置看门狗（同时保活 SW）
+    const onProgress = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(), AI_IDLE_TIMEOUT_MS);
+      chrome.runtime.sendMessage({ type: 'AI_PROGRESS' }).catch(() => {});
+    };
     const text = cfg.provider === 'anthropic'
-      ? await callAnthropic(cfg, data, image)
-      : await callOpenAI(cfg, data, image);
+      ? await callAnthropic(cfg, data, image, controller.signal, onProgress)
+      : await callOpenAI(cfg, data, image, controller.signal, onProgress);
+    clearTimeout(timer);
     chrome.runtime.sendMessage({ type: 'AI_DONE', analysis: parseAnalysis(text) }).catch(() => {});
   } catch (err) {
     chrome.runtime.sendMessage({
       type: 'AI_ERROR',
-      error: String((err && err.message) || err)
+      error: (err && err.name === 'AbortError')
+        ? `AI 长时间无响应（${AI_IDLE_TIMEOUT_MS / 1000}s 无新数据），请检查网络或更换更快的模型后重试`
+        : String((err && err.message) || err)
     }).catch(() => {});
   }
 }
 
 // Anthropic 原生协议
-async function callAnthropic(cfg, data, image) {
+async function callAnthropic(cfg, data, image, signal, onProgress) {
   const res = await fetch(ANTHROPIC_URL, {
     method: 'POST',
+    signal,
     headers: {
       'content-type': 'application/json',
       'x-api-key': cfg.anthropicKey,
@@ -151,6 +175,7 @@ async function callAnthropic(cfg, data, image) {
         const ev = JSON.parse(payload);
         if (ev.type === 'content_block_delta' && ev.delta && ev.delta.text) {
           text += ev.delta.text;
+          onProgress();
         }
       } catch { /* 忽略非 JSON 行 */ }
     }
@@ -159,9 +184,10 @@ async function callAnthropic(cfg, data, image) {
 }
 
 // OpenAI 兼容协议（OpenAI / Kimi / Qwen / GLM / OpenRouter / 自建服务等）
-async function callOpenAI(cfg, data, image) {
+async function callOpenAI(cfg, data, image, signal, onProgress) {
   const res = await fetch(cfg.openaiBaseUrl + '/chat/completions', {
     method: 'POST',
+    signal,
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${cfg.openaiKey}`
@@ -185,6 +211,7 @@ async function callOpenAI(cfg, data, image) {
   // 部分兼容服务不支持流式 → 整包 JSON 解析
   if (ctype.includes('application/json')) {
     const json = await res.json();
+    onProgress();
     return (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
   }
 
@@ -207,7 +234,10 @@ async function callOpenAI(cfg, data, image) {
       try {
         const ev = JSON.parse(payload);
         const delta = ev.choices && ev.choices[0] && ev.choices[0].delta;
-        if (delta && delta.content) text += delta.content;
+        if (delta && delta.content) {
+          text += delta.content;
+          onProgress();
+        }
       } catch { /* 忽略非 JSON 行 */ }
     }
   }
@@ -283,7 +313,9 @@ async function blobToBase64(blob) {
 
 const SYSTEM_PROMPT = `你是一位资深 UI/UX 设计分析师。根据提供的网站截图和结构化设计数据，
 分析该网站的设计语言并输出标准格式的设计规范文档。
-你的分析应兼顾：设计意图解读（WHY）和精确数值记录（WHAT）。`;
+你的分析应兼顾：设计意图解读（WHY）和精确数值记录（WHAT）。
+解读必须有洞察力：回答“这些数值组合产生了什么视觉效果与意图”，
+严禁复述页面标题、产品定位或功能描述——那不是设计解读。`;
 
 function buildUserPrompt(data) {
   const structured = {
@@ -305,9 +337,13 @@ ${JSON.stringify(structured, null, 2)}
 
 请按以下结构输出 JSON（只输出 JSON，不要其他内容）：
 
-1. style_tags: 2-3个风格标签（如"极简主义"、"深色模式"）
-2. summary: 一句话设计意图概述
-3. intent: 设计意图解读段落（描述 WHY，100-200 字）
+1. style_tags: 2-3个风格标签，必须源自视觉特征（如“高留白”“胶囊语言”“深色模式”），禁用行业泛称
+2. summary: 一句话视觉性格概述。必须基于视觉证据（色彩占比、留白密度、圆角语言、对比关系），
+   严禁复述网站标题、产品定位或目标人群。
+   反例：“面向 GenZ 创业者的轻量级社交平台。”（这是产品描述，不是设计解读）
+   正例：“以中性灰白为底、极高留白占比，仅保留单一品牌蓝作为高饱和焦点，用工具感的克制包裹社区温度。”
+3. intent: 设计意图解读段落（100-200 字），必须引用至少 3 个具体数值证据
+   （如主色占比、圆角值、间距节奏、字号对比），并解释它们带来的用户感知
 4. design_tokens:
    - colors: [{name, value, role, css_property}]
    - typography: [{level, family, size, weight, css}]

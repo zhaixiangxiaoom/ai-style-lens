@@ -7,16 +7,27 @@ const $ = id => document.getElementById(id);
 const state = {
   data: null,      // 阶段 1 提取结果
   analysis: null,  // 阶段 2 AI 解读，无 Key 时始终为 null
-  hasKey: false
+  hasKey: false,
+  ai: { status: 'idle', error: '' } // idle | running | done | error（AI 状态机）
 };
 
 let toastTimer = null;
+let aiWatchdog = null;      // AI 超时看门狗
+let aiKeepalive = null;     // AI 生成期间保持开放的 port，防止 Service Worker 被终止
+const AI_TIMEOUT_MS = 95000; // 与 background 的空闲超时（90s 无新数据）对齐，加 5s 余量
 
 init();
 
 async function init() {
   bindEvents();
   analyze(); // 打开面板即自动分析当前页
+
+  // 设置页保存 AI 配置后自动重新分析，无需手动刷新面板
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'sync') return;
+    const aiKeys = ['provider', 'anthropicKey', 'claudeApiKey', 'openaiBaseUrl', 'openaiKey', 'openaiModel'];
+    if (aiKeys.some(k => changes[k])) analyze();
+  });
 }
 
 function bindEvents() {
@@ -24,6 +35,14 @@ function bindEvents() {
   $('retryBtn').addEventListener('click', analyze);
   $('exportBtn').addEventListener('click', exportMD);
   $('unlockCard').addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' });
+  });
+  // 设置入口：无论是否已配置 Key 都可随时编辑
+  $('settingsBtn').addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' });
+  });
+  $('aiRetryBtn').addEventListener('click', analyze);
+  $('aiSettingsBtn').addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' });
   });
 
@@ -50,22 +69,36 @@ chrome.runtime.onMessage.addListener(msg => {
   if (!msg || !msg.type) return;
   if (msg.type === 'TRIGGER_ANALYZE') analyze();
   if (msg.type === 'AI_START') {
-    $('aiSkeleton').hidden = false;
     setStep('step3', 'active');
+    openAIKeepalive();
+    setAIStatus('running');
+  }
+  if (msg.type === 'AI_PROGRESS') {
+    // 有新数据流入：重置看门狗，只要 token 持续返回就不超时
+    if (state.ai.status === 'running') startAIWatchdog();
   }
   if (msg.type === 'AI_DONE') {
+    closeAIKeepalive();
     state.analysis = msg.analysis;
-    applyAI();
+    setAIStatus('done');
   }
   if (msg.type === 'AI_ERROR') {
-    $('aiSkeleton').hidden = true;
-    showToast('AI 解读失败：' + msg.error, null);
+    closeAIKeepalive();
+    setStep('step3', 'error');
+    setAIStatus('error', msg.error || 'AI 解读失败');
   }
 });
 
 /* ===== 分析流程 ===== */
 
 async function analyze() {
+  // 新分析开始：先重置数据与 AI 状态机
+  //（ANALYZE 发出后 AI 消息才可能到达，此处重置不会覆盖先到的消息）
+  state.analysis = null;
+  clearAIWatchdog();
+  closeAIKeepalive();
+  state.ai = { status: 'idle', error: '', notStartedReason: '' };
+
   setView('loading');
   setStep('step1', 'active');
   setStep('step2', 'pending');
@@ -80,7 +113,6 @@ async function analyze() {
   }
 
   state.data = res.data;
-  state.analysis = null;
   state.hasKey = res.hasKey;
 
   // 阶段 1 完成：色板先行渲染，再切结果视图
@@ -95,8 +127,17 @@ async function analyze() {
   renderResult();
   setView('result');
 
-  if (res.hasKey) {
-    $('aiSkeleton').hidden = false;
+  // 仅当 background 确认 AI 已启动（有 KEY 且有截图）才进入 running；
+  // 若 AI 消息已先到达（快失败），renderAI 已渲染对应状态，不再覆盖
+  if (res.aiStarted && state.ai.status === 'idle') {
+    openAIKeepalive();
+    setAIStatus('running');
+  } else if (!res.aiStarted && state.ai.status === 'idle') {
+    // AI 未启动：标记 step3 并记录具体原因（截图失败/未配置），避免永久 pending
+    setStep('step3', 'error');
+    state.ai.notStartedReason = res.hasKey
+      ? `页面截图失败：${res.screenshotError || '未知原因'}。请重试；若持续失败，请到 chrome://extensions 重新加载本扩展。`
+      : '';
   }
 }
 
@@ -163,12 +204,11 @@ function renderResult() {
       </div>
     </div>`).join('');
 
-  // AI 区域重置
+  // AI 区域：先清空上一轮内容，再统一交给 AI 状态机渲染（防残留与竞态）
   $('aiZone').hidden = true;
   $('aiZone').classList.remove('fade-in');
   $('moodIntent').hidden = true;
-  $('aiSkeleton').hidden = true;
-  $('unlockCard').hidden = state.hasKey; // 无 Key：引导卡片
+  renderAI();
 
   // 详细规范折叠卡片组
   renderDetails(d);
@@ -259,6 +299,7 @@ function applyAI() {
   if (!a) return;
 
   $('aiSkeleton').hidden = true;
+  $('aiErrorCard').hidden = true;
   setStep('step3', 'done');
 
   if (a.tags && a.tags.length) {
@@ -275,6 +316,90 @@ function applyAI() {
   }
 
   $('unlockCard').hidden = true;
+}
+
+/* ===== AI 状态机：统一处理 AI_START / AI_DONE / AI_ERROR 与渲染竞态 ===== */
+
+function setAIStatus(status, error) {
+  state.ai.status = status;
+  if (error != null) state.ai.error = error;
+  if (status === 'running') startAIWatchdog();
+  if (status === 'done' || status === 'error') clearAIWatchdog();
+  renderAI();
+}
+
+// 按状态机渲染 AI 区域（骨架屏 / 结果 / 错误卡 / 解锁引导），渲染竞态安全
+function renderAI() {
+  const st = state.ai.status;
+
+  if (st === 'done' && state.analysis) {
+    $('aiSkeleton').hidden = true;
+    $('aiErrorCard').hidden = true;
+    applyAI();
+    return;
+  }
+
+  if (st === 'error') {
+    $('aiSkeleton').hidden = true;
+    $('unlockCard').hidden = true;
+    $('aiErrorDetail').textContent = state.ai.error || 'AI 解读失败';
+    $('aiErrorCard').hidden = false;
+    return;
+  }
+
+  if (st === 'running') {
+    $('aiErrorCard').hidden = true;
+    $('unlockCard').hidden = true;
+    $('aiSkeleton').hidden = false;
+    return;
+  }
+
+  // idle：无 KEY 显示解锁引导；有 KEY 但 AI 未启动（如截图失败）给出明确提示
+  $('aiSkeleton').hidden = true;
+  $('aiErrorCard').hidden = true;
+  if (state.hasKey) {
+    $('unlockCard').hidden = true;
+    $('aiErrorDetail').textContent = state.ai.notStartedReason ||
+      '本次分析未获取到页面截图，AI 解读未启动。点击重试；若持续失败，请到 chrome://extensions 重新加载本扩展。';
+    $('aiErrorCard').hidden = false;
+  } else {
+    $('unlockCard').hidden = false;
+  }
+}
+
+// 看门狗：background 异常挂起/被终止时，保证面板不会永久 loading
+//（AI_PROGRESS 到达时会重新计时，只有真正无响应才会触发）
+function startAIWatchdog() {
+  clearAIWatchdog();
+  aiWatchdog = setTimeout(() => {
+    if (state.ai.status === 'running') {
+      closeAIKeepalive();
+      setStep('step3', 'error');
+      setAIStatus('error', 'AI 长时间无响应，请检查网络或更换更快的模型后重试');
+    }
+  }, AI_TIMEOUT_MS);
+}
+
+function clearAIWatchdog() {
+  clearTimeout(aiWatchdog);
+  aiWatchdog = null;
+}
+
+// keepalive：AI 生成期间保持与 Service Worker 的开放连接，
+// 防止 SW 在 60~90s 的长流式请求中被 Chrome 终止（终止后 AI_DONE/ERROR 永远无法送达）
+function openAIKeepalive() {
+  closeAIKeepalive();
+  try {
+    aiKeepalive = chrome.runtime.connect({ name: 'ai-keepalive' });
+    aiKeepalive.onDisconnect.addListener(() => { aiKeepalive = null; });
+  } catch { aiKeepalive = null; }
+}
+
+function closeAIKeepalive() {
+  if (aiKeepalive) {
+    try { aiKeepalive.disconnect(); } catch {}
+    aiKeepalive = null;
+  }
 }
 
 /* ===== 全量可复制 + Toast ===== */

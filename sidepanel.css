@@ -73,12 +73,8 @@ body {
 .panel-header .logo {
   width: 28px;
   height: 28px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
   border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
+  object-fit: cover;
   flex-shrink: 0;
 }
 
@@ -96,6 +92,28 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Header 设置入口（无论是否已配置 Key 都可见） */
+.panel-header .settings-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 15px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.panel-header .settings-btn:hover {
+  background: var(--card-bg-2);
+  color: var(--text-1);
 }
 
 /* ===== 视图切换 ===== */
@@ -160,10 +178,12 @@ body {
 .loading-step.done .dot { background: #22c55e; }
 .loading-step.active .dot { background: #6366f1; animation: pulse 1s infinite; }
 .loading-step.pending .dot { background: var(--border); }
+.loading-step.error .dot { background: #ef4444; }
 
 .loading-step.done { color: #22c55e; }
 .loading-step.active { color: var(--text-1); }
 .loading-step.pending { color: var(--text-3); }
+.loading-step.error { color: #ef4444; }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
@@ -348,6 +368,46 @@ body {
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+/* ===== AI 失败/未启动提示卡（持久展示） ===== */
+.ai-error-card {
+  margin: 0 16px 16px;
+  padding: 14px 16px;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  background: #fef2f2;
+}
+
+@media (prefers-color-scheme: dark) {
+  .ai-error-card {
+    border-color: #4c2626;
+    background: #2a1a1c;
+  }
+}
+
+.ai-error-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #dc2626;
+}
+
+@media (prefers-color-scheme: dark) {
+  .ai-error-title { color: #f87171; }
+}
+
+.ai-error-detail {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  margin-top: 6px;
+  word-break: break-all;
+}
+
+.ai-error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* ===== 无 Key 解锁引导 ===== */

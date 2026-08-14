@@ -26,6 +26,9 @@ async function init() {
   $('openaiKey').value = s.openaiKey || '';
   $('openaiModel').value = s.openaiModel || '';
 
+  // 根据已保存的 Base URL 反推预设下拉（无匹配则为“自定义”）
+  $('preset').value = matchPreset(s.openaiBaseUrl || '');
+
   setProvider(s.provider === 'openai' ? 'openai' : 'anthropic');
 
   $('provAnthropic').addEventListener('click', () => setProvider('anthropic'));
@@ -36,6 +39,11 @@ async function init() {
     if (!p) return;
     $('openaiBaseUrl').value = p.baseUrl;
     $('openaiModel').value = p.model;
+  });
+
+  // 手动改 Base URL 时同步预设下拉（匹配到预设则选中，否则回到自定义）
+  $('openaiBaseUrl').addEventListener('change', e => {
+    $('preset').value = matchPreset(e.target.value);
   });
 
   $('saveBtn').addEventListener('click', save);
@@ -49,6 +57,13 @@ function setProvider(p) {
   $('provOpenai').classList.toggle('active', p === 'openai');
   $('secAnthropic').hidden = p !== 'anthropic';
   $('secOpenai').hidden = p !== 'openai';
+}
+
+// Base URL 反推预设 key（忽略尾部斜杠；无匹配返回 'custom'）
+function matchPreset(url) {
+  const norm = String(url).trim().replace(/\/+$/, '');
+  const hit = Object.entries(PRESETS).find(([, p]) => p.baseUrl.replace(/\/+$/, '') === norm);
+  return hit ? hit[0] : 'custom';
 }
 
 async function save() {

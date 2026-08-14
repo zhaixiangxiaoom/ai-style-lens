@@ -12,9 +12,10 @@
 
   <!-- Header -->
   <div class="panel-header">
-    <div class="logo">🔍</div>
+    <img class="logo" src="icons/icon48.png" alt="StyleLens">
     <h1>StyleLens</h1>
     <span class="url" id="panelUrl"></span>
+    <button class="settings-btn" id="settingsBtn" title="AI 设置">⚙️</button>
   </div>
 
   <!-- 空状态 -->
@@ -74,6 +75,16 @@
       <div class="sk-line"></div>
       <div class="sk-line"></div>
       <div class="sk-line"></div>
+    </div>
+
+    <!-- AI 失败/未启动提示（持久展示，替代转瞬即逝的 Toast） -->
+    <div class="ai-error-card" id="aiErrorCard" hidden>
+      <div class="ai-error-title">⚠️ AI 解读未生成</div>
+      <div class="ai-error-detail" id="aiErrorDetail"></div>
+      <div class="ai-error-actions">
+        <button class="btn btn-secondary" id="aiRetryBtn">重试 AI 解读</button>
+        <button class="btn btn-secondary" id="aiSettingsBtn">打开设置</button>
+      </div>
     </div>
 
     <!-- 无 Key 解锁引导卡片 -->

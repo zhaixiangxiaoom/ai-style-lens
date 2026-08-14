@@ -136,7 +136,7 @@
     return list;
   }
 
-  // 2) 页面高频色兜底（Top10）
+  // 2) 页面高频色兖底（Top10）
   function extractFrequentColors(samples) {
     const freq = new Map();
     for (const el of samples) {
@@ -153,9 +153,54 @@
     }
     return [...freq.values()].sort((a, b) => b.count - a.count);
   }
-
+  
+  // 统计指定色值在全页 DOM 的实际使用次数（含视口外），
+  // 用于识别“仅声明未使用”的 CSS 变量（如 Tailwind v4 整板调色板）
+  function countColorUsage(targets) {
+    const usage = new Map();
+    if (!targets.size) return usage;
+    const rgbOf = v => {
+      const m = /^#([0-9a-f]{6})$/i.exec(v);
+      if (!m) return null;
+      const n = parseInt(m[1], 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    };
+    // 容差匹配：computed 的 oklch/lab 经 canvas 转 hex 后与声明值可能有 ±1 舍入差
+    const targetList = [...targets];
+    const match = hex => {
+      if (targets.has(hex)) return hex;
+      const a = rgbOf(hex);
+      if (!a) return null;
+      for (const t of targetList) {
+        const b = rgbOf(t);
+        if (b && Math.abs(a[0] - b[0]) <= 3 && Math.abs(a[1] - b[1]) <= 3 && Math.abs(a[2] - b[2]) <= 3) return t;
+      }
+      return null;
+    };
+    let n = 0;
+    for (const el of document.querySelectorAll('body *')) {
+      if (++n > 1500) break;
+      const cs = getComputedStyle(el);
+      for (const raw of [cs.color, cs.backgroundColor]) {
+        if (isTransparent(raw)) continue;
+        const key = match(toHex(raw).toLowerCase());
+        if (key) usage.set(key, (usage.get(key) || 0) + 1);
+      }
+    }
+    return usage;
+  }
+  
   function extractColors(samples) {
-    const colors = extractCssVarColors();
+    // CSS 变量色：按“实际使用次数”排序，剔除仅声明未使用的非品牌色
+    // （red-500 这类只用在单个角标上的调色板项不属于页面视觉语言）
+    const varColors = extractCssVarColors();
+    const usage = countColorUsage(new Set(varColors.map(c => c.value.toLowerCase())));
+    const isBrandLike = n => /brand|primary|accent|main|cta|link|logo|focus/i.test(n);
+    const colors = varColors
+      .map(c => ({ ...c, count: usage.get(c.value.toLowerCase()) || 0 }))
+      .filter(c => c.count >= 2 || isBrandLike(c.name))
+      .sort((a, b) => b.count - a.count);
+  
     const seen = new Set(colors.map(c => c.value.toLowerCase()));
     for (const item of extractFrequentColors(samples)) {
       if (colors.length >= 10) break;
@@ -165,10 +210,11 @@
       colors.push({
         name: item.kind === 'bg' ? 'Background ' + item.value : 'Text ' + item.value,
         value: item.value,
-        css: (item.kind === 'bg' ? 'background-color: ' : 'color: ') + item.value + ';'
+        css: (item.kind === 'bg' ? 'background-color: ' : 'color: ') + item.value + ';',
+        count: item.count
       });
     }
-    return colors.slice(0, 10);
+    return colors.slice(0, 10).map(({ name, value, css }) => ({ name, value, css }));
   }
 
   /* ================= 字体（语义标签采样） ================= */
@@ -294,8 +340,9 @@
   function extractRadius(samples) {
     const freq = new Map();
     for (const el of samples) {
-      const n = Math.round(parseFloat(getComputedStyle(el).borderRadius));
+      let n = Math.round(parseFloat(getComputedStyle(el).borderRadius));
       if (!n) continue;
+      if (n > 999) n = 9999; // 浏览器对超大圆角的钳位值（如 16777200px）统一为胶囊 9999px
       const e = freq.get(n) || { count: 0, el };
       e.count++;
       freq.set(n, e);
