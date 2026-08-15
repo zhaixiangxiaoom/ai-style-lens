@@ -39,7 +39,7 @@ StyleLens（以下简称"本扩展"）尊重并保护用户隐私。本政策说
 
 ## 六、联系方式
 
-如有隐私相关问题，请联系：[请填写您的联系邮箱]
+如有隐私相关问题，请联系：1558968288@qq.com
 
 ---
 
@@ -84,4 +84,4 @@ Any updates to this policy will be posted on this page. Continued use of the ext
 
 ## 6. Contact
 
-For privacy questions, contact: [your email]
+For privacy questions, contact: 1558968288@qq.com
