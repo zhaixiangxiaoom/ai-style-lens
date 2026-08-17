@@ -110,13 +110,15 @@ async function runAI(cfg, data, screenshot) {
     let timer = setTimeout(() => controller.abort(), AI_IDLE_TIMEOUT_MS);
     // 每收到数据重置空闲计时，并节流推送已解析的部分字段（面板流式预览 + 看门狗重置 + SW 保活）
     let lastPush = 0;
-    const onProgress = fullText => {
+    const onProgress = (fullText, thinking) => {
       clearTimeout(timer);
       timer = setTimeout(() => controller.abort(), AI_IDLE_TIMEOUT_MS);
       const now = Date.now();
       if (now - lastPush < 120) return; // 120ms 节流，避免消息风暴
       lastPush = now;
-      chrome.runtime.sendMessage({ type: 'AI_PROGRESS', partial: extractPartial(fullText) }).catch(() => {});
+      const partial = extractPartial(fullText);
+      partial.thinking = !!thinking; // 思考模型（qwen3 等）reasoning 阶段标记
+      chrome.runtime.sendMessage({ type: 'AI_PROGRESS', partial }).catch(() => {});
     };
     const text = cfg.provider === 'anthropic'
       ? await callAnthropic(cfg, data, image, controller.signal, onProgress)
@@ -239,9 +241,11 @@ async function callOpenAI(cfg, data, image, signal, onProgress) {
       try {
         const ev = JSON.parse(payload);
         const delta = ev.choices && ev.choices[0] && ev.choices[0].delta;
-        if (delta && delta.content) {
-          text += delta.content;
-          onProgress(text);
+        // reasoning_content（思考阶段）也算活动：重置空闲计时 + 推送思考状态，
+        // 否则思考模型长思考期会被误判为“无新数据”而中止
+        if (delta && (delta.content || delta.reasoning_content)) {
+          if (delta.content) text += delta.content;
+          onProgress(text, !!delta.reasoning_content && !delta.content);
         }
       } catch { /* 忽略非 JSON 行 */ }
     }

@@ -572,6 +572,10 @@ function renderLive(p) {
   if (text) {
     $('aiLiveText').hidden = false;
     $('aiLiveText').textContent = text;
+  } else if (p.thinking) {
+    // 思考模型（qwen3 等）reasoning 阶段：content 尚未开始，给出可见反馈
+    $('aiLiveText').hidden = false;
+    $('aiLiveText').textContent = '模型正在思考…';
   }
 }
 

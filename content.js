@@ -97,12 +97,38 @@
 
   function gcd(a, b) { return b ? gcd(b, a % b) : a; }
 
+  // —— 浮层 widget 检测 ——
+  // 第三方浏览器扩展注入的聊天窗/购物助手几乎必是：fixed/sticky、高 z-index、宽 < 70% 视口；
+  // 它们的主题色不属于页面视觉语言，用色统计时整棵剪除
+  const widgetRoots = (() => {
+    let roots = null;
+    return () => {
+      if (roots) return roots;
+      roots = [];
+      let n = 0;
+      for (const el of document.querySelectorAll('body *')) {
+        if (++n > 3000) break;
+        const cs = getComputedStyle(el);
+        if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+        if (parseInt(cs.zIndex, 10) < 1000) continue;
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        if (r.width >= innerWidth * 0.7) continue; // 全宽 fixed 元素（导航等）属于页面本体
+        roots.push(el);
+      }
+      return roots;
+    };
+  })();
+  const inWidget = el => widgetRoots().some(r => r === el || r.contains(el));
+
   /* ================= 颜色 ================= */
 
   // 1) CSS 变量优先（var() 引用递归解析后再判断颜色，避免字体等非色变量混入）
   function extractCssVarColors() {
     const vars = new Map();
     for (const sheet of document.styleSheets) {
+      // 跳过浏览器扩展注入的样式表，避免第三方插件主题变量（如 jjext-*）污染页面色体系
+      if (/^(chrome|moz)-extension:/.test(sheet.href || '')) continue;
       const rules = safeRules(sheet);
       if (!rules) continue;
       walkRules(rules, rule => {
@@ -122,8 +148,10 @@
     };
     const list = [];
     const seen = new Set();
+    const rootCs = getComputedStyle(document.documentElement);
     for (const [prop, raw] of vars) {
-      const resolved = resolve(raw, 0);
+      // 真实级联值为准：多个内联表重复声明同一变量（插件注入常见）时，样式表遍历顺序可能与级联结果不一致
+      const resolved = rootCs.getPropertyValue(prop).trim() || resolve(raw, 0);
       if (!isColor(resolved)) continue;
       const value = toHex(resolved);
       const key = value.toLowerCase();
@@ -131,7 +159,7 @@
       seen.add(key);
       const name = prop.slice(2);
       const decl = /bg|background|surface|fill/i.test(name) ? 'background-color' : 'color';
-      list.push({ name, value, css: `${decl}: ${value};` });
+      list.push({ name, value, css: `${decl}: ${value};`, kind: decl === 'background-color' ? 'bg' : 'text' });
     }
     return list;
   }
@@ -140,6 +168,7 @@
   function extractFrequentColors(samples) {
     const freq = new Map();
     for (const el of samples) {
+      if (inWidget(el)) continue; // 插件浮层不参与页面高频色统计
       const cs = getComputedStyle(el);
       const pairs = [[cs.backgroundColor, 'bg'], [cs.color, 'text']];
       for (const [raw, kind] of pairs) {
@@ -165,7 +194,8 @@
       const n = parseInt(m[1], 16);
       return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
     };
-    // 容差匹配：computed 的 oklch/lab 经 canvas 转 hex 后与声明值可能有 ±1 舍入差
+    // 容差匹配：computed 的 oklch/lab 经 canvas 转 hex 后舍入差可达 ±3（Tailwind v4 常见）；
+    // 容差引入的跨容器误配由 extractColors 的“容器集中度”规则兜底
     const targetList = [...targets];
     const match = hex => {
       if (targets.has(hex)) return hex;
@@ -178,27 +208,95 @@
       return null;
     };
     let n = 0;
+    const vw = innerWidth * innerHeight || 1;
+    const contCache = new Map();
+    // 把元素归属到“局部容器”：最近的非 static 定位祖先，否则归到 body 直属子节点
+    const containerOf = el => {
+      const chain = [];
+      let a = el;
+      while (a && a !== document.body) {
+        if (contCache.has(a)) {
+          const c = contCache.get(a);
+          chain.forEach(x => contCache.set(x, c));
+          return c;
+        }
+        chain.push(a);
+        if (getComputedStyle(a).position !== 'static') break;
+        a = a.parentElement;
+      }
+      const c = (a && a !== document.body) ? a : chain[chain.length - 1];
+      chain.forEach(x => contCache.set(x, c));
+      return c;
+    };
+    const subUse = new Map(); // 色值 -> Map(容器 -> 权重)
+    const exactConts = new Map(); // 色值 -> Map(容器 -> 精确命中权重)，容差命中不算
     for (const el of document.querySelectorAll('body *')) {
       if (++n > 1500) break;
+      if (inWidget(el)) continue; // 插件浮层不参与页面用色统计
+      // 面积加权：视觉语言由大面积色块主导，第三方插件的小 widget 拼不过页面本体
+      const r = el.getBoundingClientRect();
+      const w = Math.max(0.02, Math.min(1, (r.width * r.height) / vw));
       const cs = getComputedStyle(el);
       for (const raw of [cs.color, cs.backgroundColor]) {
         if (isTransparent(raw)) continue;
-        const key = match(toHex(raw).toLowerCase());
-        if (key) usage.set(key, (usage.get(key) || 0) + 1);
+        const hex = toHex(raw).toLowerCase();
+        const key = match(hex);
+        if (!key) continue;
+        usage.set(key, (usage.get(key) || 0) + w);
+        const cont = containerOf(el);
+        if (!cont) continue;
+        if (key === hex) {
+          const s = exactConts.get(key) || new Map();
+          s.set(cont, (s.get(cont) || 0) + w);
+          exactConts.set(key, s);
+        }
+        const m = subUse.get(key) || new Map();
+        m.set(cont, (m.get(cont) || 0) + w);
+        subUse.set(key, m);
       }
     }
-    return usage;
+    return { usage, subUse, exactConts, vw };
   }
   
   function extractColors(samples) {
     // CSS 变量色：按“实际使用次数”排序，剔除仅声明未使用的非品牌色
     // （red-500 这类只用在单个角标上的调色板项不属于页面视觉语言）
     const varColors = extractCssVarColors();
-    const usage = countColorUsage(new Set(varColors.map(c => c.value.toLowerCase())));
+    const { usage, subUse, exactConts } = countColorUsage(new Set(varColors.map(c => c.value.toLowerCase())));
     const isBrandLike = n => /brand|primary|accent|main|cta|link|logo|focus/i.test(n);
+    // 页面自有 token 的常见命名空间；不在此列的（如 jjext-*）视为第三方自带命名
+    const COMMON_NS = /^(color|bg|background|text|font|brand|primary|accent|theme|base|surface|border|fill|main|link|neutral|gray|grey|semantic|ui|tw|tailwind|design|token|sys|material|md|ant|el|van|arco|semi|app|site|page|global|common|default)/i;
+    // 主导容器（权重最大）之外的精确使用权重 ≥ 0.1：
+    // 插件变量只在自家 widget 内精确使用、或靠容差把页面近似色记到自己头上、
+    // 或页面仅有零星同色元素时，都不算真实使用
+    const exactOutsideDominant = key => {
+      const exacts = exactConts.get(key);
+      if (!exacts || !exacts.size) return false;
+      const m = subUse.get(key);
+      if (!m || !m.size) return false;
+      let top = null, topW = 0;
+      for (const [cont, w] of m) {
+        if (w > topW) { topW = w; top = cont; }
+      }
+      let outside = 0;
+      for (const [cont, w] of exacts) {
+        if (cont !== top) outside += w;
+      }
+      return outside >= 0.1;
+    };
     const colors = varColors
-      .map(c => ({ ...c, count: usage.get(c.value.toLowerCase()) || 0 }))
-      .filter(c => c.count >= 2 || isBrandLike(c.name))
+      .map(c => ({ ...c, count: usage.get(c.value.toLowerCase()) || 0, foreign: !COMMON_NS.test(c.name) }))
+      .filter(c => {
+        // 面积加权和 ≥ 0.5 才视为“页面核心色”；品牌名变量豁免但必须有真实使用
+        const base = c.count >= 0.5 || (isBrandLike(c.name) && c.count > 0);
+        if (!base) return false;
+        // 第三方命名空间：必须在主导容器之外存在精确使用，否则剔除（两条陷阱）：
+        // ① 使用量全靠容差误配（页面近似色被记到插件变量头上，如 #1a1a1a→#181818）；
+        // ② 只在自家 widget 容器内精确使用（插件主题色）。
+        // 页面自有命名空间不受此规则影响
+        if (!COMMON_NS.test(c.name) && !exactOutsideDominant(c.value.toLowerCase())) return false;
+        return true;
+      })
       .sort((a, b) => b.count - a.count);
   
     const seen = new Set(colors.map(c => c.value.toLowerCase()));
@@ -214,7 +312,12 @@
         count: item.count
       });
     }
-    return colors.slice(0, 10).map(({ name, value, css }) => ({ name, value, css }));
+    return colors.slice(0, 10).map(({ name, value, css, kind, foreign }) => ({
+      // 外部命名空间变量幸存时（色值确为页面所用），以中性名展示，不暴露插件变量名
+      name: foreign ? (kind === 'bg' ? 'Background ' : 'Text ') + value : name,
+      value,
+      css
+    }));
   }
 
   /* ================= 字体（语义标签采样） ================= */
