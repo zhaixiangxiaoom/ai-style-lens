@@ -387,11 +387,13 @@
       for (const el of els) {
         const hex = toHex(getComputedStyle(el)[prop]);
         if (!hex || skip(hex)) continue;
-        const e = freq.get(hex) || { count: 0, el };
+        const e = freq.get(hex) || { count: 0 };
         e.count++;
         freq.set(hex, e);
       }
-      return [...freq.values()].sort((a, b) => b.count - a.count)[0] || null;
+      let top = null;
+      for (const [value, e] of freq) if (!top || e.count > top.count) top = { value, count: e.count };
+      return top;
     };
     // 同主色元素里最常见的 hover 值；computed 驼峰属性名 → CSSOM 短名键
     const hoverOf = (els, prop, baseValue) => {
