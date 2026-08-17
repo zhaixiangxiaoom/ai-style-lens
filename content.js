@@ -320,6 +320,128 @@
     }));
   }
 
+  // 3) 语义角色色：交互元素显式采样 + :hover 规则解析 + 边框聚合
+  // 扁平色板回答“页面有哪些颜色”，语义层回答“哪个色是按钮、哪个是链接、hover 变什么”
+  function extractSemanticColors(samples) {
+    const rootCs = getComputedStyle(document.documentElement);
+    const resolveColor = v => {
+      if (!v) return null;
+      const m = /var\(\s*(--[\w-]+)/.exec(v);
+      if (m) v = rootCs.getPropertyValue(m[1]).trim();
+      return isColor(v) ? toHex(v) : null;
+    };
+    // :hover 规则（跳过扩展样式表，限量防失控）；文档顺序遍历，后匹配者覆盖 = 级联语义
+    const hoverRules = [];
+    for (const sheet of document.styleSheets) {
+      if (/^(chrome|moz)-extension:/.test(sheet.href || '')) continue;
+      const rs = safeRules(sheet);
+      if (!rs) continue;
+      walkRules(rs, rule => {
+        // UA 默认规则（如 button:hover 的 buttonface）无样式表归属，会污染 hover 匹配
+        if (rule.parentStyleSheet === null) return;
+        if (!rule.style || !rule.selectorText || !/:hover/.test(rule.selectorText)) return;
+        const decls = {};
+        for (const p of ['color', 'background-color', 'border-color']) {
+          const v = rule.style.getPropertyValue(p);
+          if (v) decls[p] = v.trim();
+        }
+        if (!Object.keys(decls).length) return;
+        for (const part of rule.selectorText.split(',')) {
+          if (!/:hover/.test(part)) continue;
+          const base = part.replace(/:hover/g, '').trim();
+          if (base && base !== '*') hoverRules.push({ base, decls });
+        }
+      });
+      if (hoverRules.length > 200) break;
+    }
+    const hoverVal = (el, prop) => {
+      let val = null;
+      for (const r of hoverRules) {
+        if (!r.decls[prop]) continue;
+        try { if (el.matches(r.base)) val = r.decls[prop]; } catch { /* 无效选择器 */ }
+      }
+      return resolveColor(val);
+    };
+    // 语义采样不限视口（CTA 常在首屏外），只要渲染可见
+    const rendered = el => {
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return r.width >= 4 && r.height >= 4 && cs.display !== 'none' && cs.visibility !== 'hidden';
+    };
+    const grab = (sel, limit) => {
+      const arr = [];
+      for (const el of document.querySelectorAll(sel)) {
+        if (arr.length >= limit) break;
+        if (rendered(el)) arr.push(el);
+      }
+      return arr;
+    };
+    // 近白中性色不算主色（白底描边按钮等），深色按钮保留
+    const neutralLight = hex => {
+      const n = parseInt(hex.slice(1), 16);
+      const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+      return Math.max(r, g, b) - Math.min(r, g, b) <= 12 && (r + g + b) / 3 >= 240;
+    };
+    const topBy = (els, prop, skip) => {
+      const freq = new Map();
+      for (const el of els) {
+        const hex = toHex(getComputedStyle(el)[prop]);
+        if (!hex || skip(hex)) continue;
+        const e = freq.get(hex) || { count: 0, el };
+        e.count++;
+        freq.set(hex, e);
+      }
+      return [...freq.values()].sort((a, b) => b.count - a.count)[0] || null;
+    };
+    // 同主色元素里最常见的 hover 值；computed 驼峰属性名 → CSSOM 短名键
+    const hoverOf = (els, prop, baseValue) => {
+      const kebab = prop.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+      const freq = new Map();
+      for (const el of els) {
+        if (toHex(getComputedStyle(el)[prop]) !== baseValue) continue;
+        const hv = hoverVal(el, kebab);
+        if (hv && hv !== baseValue) freq.set(hv, (freq.get(hv) || 0) + 1);
+      }
+      const top = [...freq.entries()].sort((a, b) => b[1] - a[1])[0];
+      return top && top[0];
+    };
+
+    const out = { primary: [], interactive: [], borders: [] };
+    const buttons = grab('button, [role="button"], input[type="submit"], input[type="button"]', 30);
+    const links = grab('a', 40);
+    const inputs = grab('input:not([type="submit"]):not([type="button"]):not([type="hidden"]), textarea, select', 20);
+
+    const btnBg = topBy(buttons, 'backgroundColor', neutralLight);
+    if (btnBg) {
+      out.primary.push({
+        role: '按钮主色', value: btnBg.value,
+        hover: hoverOf(buttons, 'backgroundColor', btnBg.value),
+        css: `background-color: ${btnBg.value};`
+      });
+    }
+    const link = topBy(links, 'color', () => false);
+    if (link) {
+      out.interactive.push({
+        role: '链接', value: link.value,
+        hover: hoverOf(links, 'color', link.value),
+        css: `color: ${link.value};`
+      });
+    }
+    // 纯黑/纯白边框多为表格分隔线等结构性产物，不算设计 token
+    const pureBlackWhite = hex => /^#(000000|FFFFFF)$/.test(hex);
+    const borderEls = samples.filter(el => {
+      const cs = getComputedStyle(el);
+      return parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none';
+    });
+    const border = topBy(borderEls, 'borderTopColor', pureBlackWhite);
+    if (border) out.borders.push({ role: '边框', value: border.value, css: `border-color: ${border.value};` });
+    const inputBorder = topBy(inputs, 'borderTopColor', pureBlackWhite);
+    if (inputBorder && (!border || inputBorder.value !== border.value)) {
+      out.borders.push({ role: '输入框边框', value: inputBorder.value, css: `border-color: ${inputBorder.value};` });
+    }
+    return out;
+  }
+
   /* ================= 字体（语义标签采样） ================= */
 
   const TYPO_LEVELS = [
@@ -561,6 +683,7 @@
       dominantBgColor: extractDominantBg(),
       tokens: {
         colors: extractColors(samples),
+        semantic: extractSemanticColors(samples),
         typography: extractTypography(samples),
         spacing: extractSpacing(samples),
         radius: extractRadius(samples),

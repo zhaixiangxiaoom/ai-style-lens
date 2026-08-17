@@ -258,6 +258,19 @@ function renderDetails(d) {
     });
   }
 
+  // 语义角色色：按钮/链接/边框 + hover 态，回答“哪个色干什么用”
+  const sem = t.semantic;
+  if (sem) {
+    const semRows = [...(sem.primary || []), ...(sem.interactive || []), ...(sem.borders || [])].map(s => ({
+      color: s.value,
+      label: s.role + (s.hover ? ' · hover ' + s.hover : ''),
+      value: s.value, css: s.css, colorHex: s.value
+    }));
+    if (semRows.length) {
+      groups.push({ title: '语义色', summary: '角色与交互态', rows: semRows });
+    }
+  }
+
   if (t.typography && t.typography.length) {
     groups.push({
       title: '字体体系',
@@ -499,6 +512,12 @@ ${a.detail}
 |------|------|----------|
 ${(t.colors || []).map(c => `| ${c.name} | ${c.value} | \`${c.css}\` |`).join('\n')}
 
+### 语义色（角色与交互态）
+
+| 角色 | 常态 | Hover | CSS 声明 |
+|------|------|-------|----------|
+${semanticRowsMD(t)}
+
 ### 字体体系
 
 | 层级 | 字体 | 字号 | 字重 | CSS 声明 |
@@ -678,11 +697,24 @@ function download(filename, text, mime) {
 const keyOf = name =>
   String(name).toLowerCase().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'token';
 
+// 语义色列表（按钮/链接/边框），三种导出共用
+const semanticList = t => [
+  ...((t.semantic || {}).primary || []),
+  ...((t.semantic || {}).interactive || []),
+  ...((t.semantic || {}).borders || [])
+];
+const semanticRowsMD = t => semanticList(t)
+  .map(s => `| ${s.role} | ${s.value} | ${s.hover || '—'} | \`${s.css}\` |`).join('\n') || '| — | — | — | — |';
+
 // W3C Design Tokens 格式（tr.designtokens.org）
 function buildW3CTokens(d) {
   const t = d.tokens || {};
   const out = { color: {}, typography: {}, spacing: {}, borderRadius: {}, shadow: {} };
   (t.colors || []).forEach(c => { out.color[keyOf(c.name)] = { $value: c.value, $type: 'color' }; });
+  semanticList(t).forEach(s => {
+    out.color[keyOf(s.role)] = { $value: s.value, $type: 'color' };
+    if (s.hover) out.color[keyOf(s.role) + '-hover'] = { $value: s.hover, $type: 'color' };
+  });
   (t.typography || []).forEach(x => {
     out.typography[keyOf(x.level)] = {
       $value: { fontFamily: x.family, fontSize: x.size, fontWeight: String(x.weight) },
@@ -700,6 +732,10 @@ function buildTailwindConfig(d) {
   const t = d.tokens || {};
   const colors = {};
   (t.colors || []).forEach(c => { colors[keyOf(c.name)] = c.value; });
+  semanticList(t).forEach(s => {
+    colors[keyOf(s.role)] = s.value;
+    if (s.hover) colors[keyOf(s.role) + '-hover'] = s.hover;
+  });
   const radius = {};
   (t.radius || []).forEach(r => { radius[keyOf(r.name)] = r.value; });
   const shadows = {};
